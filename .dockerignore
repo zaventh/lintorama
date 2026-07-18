@@ -1,0 +1,10 @@
+# The build only needs the `files/` directory (COPY files /).
+# Ignore everything, then whitelist what the build consumes.
+*
+
+!files
+
+# Guard against stray junk sneaking in via the whitelist above.
+**/.DS_Store
+**/*.swp
+**/__pycache__
