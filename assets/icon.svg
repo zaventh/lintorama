@@ -1,0 +1,42 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="lintorama">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1D3C78"/>
+      <stop offset="1" stop-color="#0E7CC4"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="150" y1="120" x2="360" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EAF6FF"/>
+      <stop offset="1" stop-color="#BFE3FA"/>
+    </linearGradient>
+    <clipPath id="lens">
+      <circle cx="238" cy="230" r="112"/>
+    </clipPath>
+  </defs>
+
+  <!-- badge -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#FFFFFF" opacity="0.04"/>
+
+  <!-- magnifier handle -->
+  <rect x="318" y="318" width="150" height="56" rx="28" transform="rotate(45 318 318)" fill="#0B2A55"/>
+  <rect x="318" y="318" width="150" height="56" rx="28" transform="rotate(45 318 318)" fill="#FFFFFF" opacity="0.08"/>
+
+  <!-- lens body -->
+  <circle cx="238" cy="230" r="128" fill="#0B2A55"/>
+  <circle cx="238" cy="230" r="112" fill="url(#glass)"/>
+
+  <!-- five linter code lines, seen through the lens -->
+  <g clip-path="url(#lens)">
+    <g stroke-linecap="round" stroke-width="20">
+      <line x1="150" y1="176" x2="300" y2="176" stroke="#E23B3B"/>
+      <line x1="150" y1="212" x2="264" y2="212" stroke="#F0932B"/>
+      <line x1="150" y1="248" x2="322" y2="248" stroke="#2ECC71"/>
+      <line x1="150" y1="284" x2="252" y2="284" stroke="#3DA9FC"/>
+      <line x1="150" y1="320" x2="296" y2="320" stroke="#9B59B6"/>
+    </g>
+  </g>
+
+  <!-- lens rim highlight -->
+  <circle cx="238" cy="230" r="112" fill="none" stroke="#FFFFFF" stroke-width="4" opacity="0.35"/>
+  <path d="M170 168 A112 112 0 0 1 258 126" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+</svg>
