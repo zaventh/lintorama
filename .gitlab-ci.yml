@@ -1,0 +1,130 @@
+---
+# .gitlab-ci.yml — docker/lintorama
+#
+# Self-contained pipeline (no external template includes). Builds the lint-extras
+# image and pushes semver / major / latest tags to this project's GitLab Container
+# Registry ($CI_REGISTRY_IMAGE), then lints this repo with the freshly built image.
+#
+# RUNNER REQUIREMENT (Docker socket binding):
+#   This is a traditional Docker-executor runner — no dind, no shared daemon. The
+#   build job talks to the host Docker daemon through the bind-mounted socket, so
+#   the runner's config.toml must mount it:
+#       [runners.docker]
+#         volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]
+#   Until that is in place the build job fails fast at the `docker info` check.
+
+stages:
+  - build
+  - lint
+  - docs
+
+variables:
+  # Published image version: baked into the OCI labels (BUILD_VER) and used as the
+  # primary registry tag. Bump this for each release.
+  BUILD_VER: "5.3.0"
+
+  # Docker Hub mirror target. Set DOCKERHUB_USER and DOCKERHUB_TOKEN as protected,
+  # masked CI/CD variables (DOCKERHUB_TOKEN is a Docker Hub access token, not the
+  # account password) so every release is pushed to the public registry too.
+  DOCKERHUB_IMAGE: "docker.io/zaventh/lintorama"
+
+  # Pinned docker CLI image version.
+  DOCKER_VERSION: "28.3"
+
+  # Use the bind-mounted host daemon over its unix socket; no dind, no TLS.
+  # (Overrides the tcp://docker:2375 DOCKER_HOST the runner injects by default.)
+  DOCKER_HOST: "unix:///var/run/docker.sock"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_BUILDKIT: "1"
+
+build:
+  stage: build
+  image: "docker:$DOCKER_VERSION"
+  interruptible: true
+  rules:
+    # Build + push from the default branch (master) on every push ...
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # ... and when started manually via "Run pipeline".
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - 'docker info >/dev/null 2>&1 || { echo "host docker socket not reachable at $DOCKER_HOST — is the runner configured with volumes=[\"/var/run/docker.sock:/var/run/docker.sock\"]?"; ls -l /var/run/docker.sock 2>&1 || true; exit 1; }'
+    # CI_REGISTRY_USER=gitlab-ci-token, CI_REGISTRY_PASSWORD=$CI_JOB_TOKEN: job-token
+    # auth scoped to this project's registry, no long-lived credentials.
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # Docker Hub login for the public mirror push.
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin docker.io
+  script:
+    # Derive the major tag from the semver, e.g. 5.3.0 -> 5 (README pins :5 for pulls).
+    - MAJOR="${BUILD_VER%%.*}"
+    # Build once with three tags. $CI_JOB_STARTED_AT is already ISO8601 (no `date`).
+    - |
+      docker build \
+        --build-arg BUILD_VER="$BUILD_VER" \
+        --build-arg BUILD_DATE="$CI_JOB_STARTED_AT" \
+        --build-arg BUILD_SHA="$CI_COMMIT_SHA" \
+        --tag "$CI_REGISTRY_IMAGE:$BUILD_VER" \
+        --tag "$CI_REGISTRY_IMAGE:$MAJOR" \
+        --tag "$CI_REGISTRY_IMAGE:latest" \
+        --tag "$DOCKERHUB_IMAGE:$BUILD_VER" \
+        --tag "$DOCKERHUB_IMAGE:$MAJOR" \
+        --tag "$DOCKERHUB_IMAGE:latest" \
+        .
+    - docker push "$CI_REGISTRY_IMAGE:$BUILD_VER"
+    - docker push "$CI_REGISTRY_IMAGE:$MAJOR"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$DOCKERHUB_IMAGE:$BUILD_VER"
+    - docker push "$DOCKERHUB_IMAGE:$MAJOR"
+    - docker push "$DOCKERHUB_IMAGE:latest"
+
+lint:
+  stage: lint
+  needs: ["build"]
+  # Run the just-pushed image AS the job image (GitLab pulls it with the job token).
+  # entrypoint: [""] overrides the image's ENTRYPOINT so we invoke the linter ourselves.
+  image:
+    name: "$CI_REGISTRY_IMAGE:$BUILD_VER"
+    entrypoint: [""]
+  variables:
+    GIT_STRATEGY: clone  # lint-extras relies on `git ls-files`
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    # The Dockerfile only whitelists /code; CI checks out to $CI_PROJECT_DIR.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - /usr/local/bin/lint-extras
+
+# Sync this repo's README to the Docker Hub repository description on each release.
+# NOTE: the Docker Hub description API needs a JWT minted from /v2/users/login/.
+# DOCKERHUB_TOKEN must be an access token with Read/Write/Delete scope (or the
+# account password) — a read-only token can log in and push images but cannot
+# edit the description.
+dockerhub-description:
+  stage: docs
+  image: alpine:3.24
+  needs: ["build"]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    # Derive "zaventh/lintorama" from the docker.io/... mirror target.
+    - REPO="${DOCKERHUB_IMAGE#docker.io/}"
+    - |
+      JWT="$(curl -sf -H 'Content-Type: application/json' \
+        -d "{\"username\": \"$DOCKERHUB_USER\", \"password\": \"$DOCKERHUB_TOKEN\"}" \
+        https://hub.docker.com/v2/users/login/ | jq -r '.token')"
+    - '[ -n "$JWT" ] && [ "$JWT" != "null" ] || { echo "Docker Hub login failed"; exit 1; }'
+    # jq -Rs safely JSON-encodes the whole README (quotes, backticks, newlines).
+    - |
+      PAYLOAD="$(jq -Rs \
+        --arg short 'One Docker image, many linters, a single command.' \
+        '{description: $short, full_description: .}' < README.md)"
+    - |
+      curl -sf -X PATCH \
+        -H "Authorization: JWT $JWT" \
+        -H 'Content-Type: application/json' \
+        -d "$PAYLOAD" \
+        "https://hub.docker.com/v2/repositories/$REPO/" >/dev/null
+    - echo "Synced Docker Hub description for $REPO"
