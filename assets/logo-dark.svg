@@ -1,0 +1,39 @@
+<svg width="1000" height="240" viewBox="0 0 1000 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="lintorama">
+  <defs>
+    <linearGradient id="ring" x1="40" y1="40" x2="180" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1D3C78"/>
+      <stop offset="1" stop-color="#0E7CC4"/>
+    </linearGradient>
+    <clipPath id="lens">
+      <circle cx="110" cy="106" r="66"/>
+    </clipPath>
+  </defs>
+
+  <!-- magnifier mark -->
+  <g>
+    <!-- handle -->
+    <rect x="158" y="154" width="90" height="30" rx="15" transform="rotate(45 158 154)" fill="url(#ring)"/>
+    <!-- glass -->
+    <circle cx="110" cy="106" r="66" fill="#EAF4FC"/>
+    <!-- five linter code lines -->
+    <g clip-path="url(#lens)">
+      <g stroke-linecap="round" stroke-width="9">
+        <line x1="62" y1="72"  x2="150" y2="72"  stroke="#E23B3B"/>
+        <line x1="62" y1="89"  x2="126" y2="89"  stroke="#F0932B"/>
+        <line x1="62" y1="106" x2="158" y2="106" stroke="#2ECC71"/>
+        <line x1="62" y1="123" x2="120" y2="123" stroke="#3DA9FC"/>
+        <line x1="62" y1="140" x2="144" y2="140" stroke="#9B59B6"/>
+      </g>
+    </g>
+    <!-- ring -->
+    <circle cx="110" cy="106" r="66" fill="none" stroke="url(#ring)" stroke-width="14"/>
+    <!-- glass highlight -->
+    <path d="M74 78 A66 66 0 0 1 122 46" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
+  </g>
+
+  <!-- wordmark -->
+  <g font-family="Inter, 'Inter Display', sans-serif" font-weight="800" letter-spacing="-3">
+    <text x="284" y="140" font-size="112" fill="#FFFFFF">lint<tspan fill="#4FB6F5">orama</tspan></text>
+  </g>
+  <text x="288" y="184" font-family="Inter, sans-serif" font-weight="500" font-size="30" letter-spacing="0.5" fill="#9DB0CC">many linters, one image</text>
+</svg>

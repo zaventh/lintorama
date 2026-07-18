@@ -1,6 +1,10 @@
-# lintorama
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo.png" alt="lintorama — one Docker image, many linters, a single command" width="480">
+  </picture>
+</p>
 
-> One Docker image, many linters, a single command.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Source](https://img.shields.io/badge/source-GitHub-181717.svg?logo=github)](https://github.com/zaventh/lintorama)
