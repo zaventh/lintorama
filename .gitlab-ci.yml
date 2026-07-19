@@ -21,7 +21,7 @@ stages:
 variables:
   # Published image version: baked into the OCI labels (BUILD_VER) and used as the
   # primary registry tag. Bump this for each release.
-  BUILD_VER: "5.3.0"
+  BUILD_VER: "6.0.0"
 
   # Docker Hub mirror target. Set DOCKERHUB_USER and DOCKERHUB_TOKEN as protected,
   # masked CI/CD variables (DOCKERHUB_TOKEN is a Docker Hub access token, not the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.2.0
+# Version 3.3.0
 declare -i RESULT=0
 
 # Every file-based check enumerates via git; bail clearly if not in a work tree.
@@ -21,6 +21,29 @@ list_files() {
 # lint yaml files
 mapfile -t files < <(list_files '*.yml' '*.yaml' ':!:.agents/skills/*')
 [ ${#files[@]} -eq 0 ] || yamllint -s -- "${files[@]}"
+RESULT+=$?
+
+# schema-validate well-known config files against their published JSON Schemas.
+# check-jsonschema ships the schemas vendored, so this runs fully offline; each
+# call is a no-op unless the repo actually tracks a matching file.
+schema_check() {
+  local schema="$1"; shift
+  local matched
+  mapfile -t matched < <(list_files "$@")
+  [ ${#matched[@]} -eq 0 ] || check-jsonschema --builtin-schema "$schema" -- "${matched[@]}"
+}
+schema_check vendor.gitlab-ci '.gitlab-ci.yml' '.gitlab-ci.yaml'
+RESULT+=$?
+schema_check vendor.dependabot '.github/dependabot.yml' '.github/dependabot.yaml'
+RESULT+=$?
+schema_check vendor.renovate 'renovate.json' 'renovate.json5' '.renovaterc' '.renovaterc.json' '.renovaterc.json5' '.github/renovate.json' '.github/renovate.json5' '.gitlab/renovate.json' '.gitlab/renovate.json5'
+RESULT+=$?
+schema_check vendor.readthedocs '.readthedocs.yml' '.readthedocs.yaml'
+RESULT+=$?
+
+# lint GitHub Actions workflows (run: steps are delegated to the bundled shellcheck)
+mapfile -t files < <(list_files '.github/workflows/*.yml' '.github/workflows/*.yaml')
+[ ${#files[@]} -eq 0 ] || actionlint "${files[@]}"
 RESULT+=$?
 
 # ensure a lockfile
@@ -56,5 +79,11 @@ fi
 mapfile -t files < <(list_files '*.md' '*.markdown' ':!:.agents/skills/*')
 [ ${#files[@]} -eq 0 ] || mdl "${files[@]}"
 RESULT+=$?
+
+# verify tracked files conform to .editorconfig, if the repo defines one
+if test -f .editorconfig; then
+  ec
+  RESULT+=$?
+fi
 
 exit $RESULT
