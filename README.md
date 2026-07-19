@@ -12,6 +12,8 @@
 ![Base image](https://img.shields.io/badge/base-python%3A3--alpine3.24-blue.svg)
 ![Linters](https://img.shields.io/badge/linters-5-brightgreen.svg)
 
+# lintorama
+
 **lintorama** is a single Docker image that bundles five widely-used code
 linters — [yamllint](https://github.com/adrienverge/yamllint),
 [ShellCheck](https://www.shellcheck.net/),
