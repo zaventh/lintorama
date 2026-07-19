@@ -10,18 +10,24 @@
 [![Source](https://img.shields.io/badge/source-GitHub-181717.svg?logo=github)](https://github.com/zaventh/lintorama)
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-zaventh%2Flintorama-2496ED.svg?logo=docker&logoColor=white)](https://hub.docker.com/r/zaventh/lintorama)
 ![Base image](https://img.shields.io/badge/base-python%3A3--alpine3.24-blue.svg)
-![Linters](https://img.shields.io/badge/linters-5-brightgreen.svg)
+![Linters](https://img.shields.io/badge/linters-8-brightgreen.svg)
 
 # lintorama
 
-**lintorama** is a single Docker image that bundles five widely-used code
-linters — [yamllint](https://github.com/adrienverge/yamllint),
+**lintorama** is a single Docker image that bundles eight widely-used linters
+and validators — [yamllint](https://github.com/adrienverge/yamllint),
 [ShellCheck](https://www.shellcheck.net/),
 [hadolint](https://github.com/hadolint/hadolint),
-[markdownlint (mdl)](https://github.com/markdownlint/markdownlint), and
-[luacheck](https://github.com/lunarmodules/luacheck) — behind one entrypoint,
-`lint-extras`. Point it at a Git repository and it runs the right linter over
-every tracked YAML, shell, Lua, `Dockerfile`, and Markdown file, then exits
+[markdownlint (mdl)](https://github.com/markdownlint/markdownlint),
+[luacheck](https://github.com/lunarmodules/luacheck),
+[actionlint](https://github.com/rhysd/actionlint),
+[check-jsonschema](https://github.com/python-jsonschema/check-jsonschema), and
+[editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker)
+— behind one entrypoint, `lint-extras`. Point it at a Git repository and it runs
+the right check over every tracked YAML, shell, Lua, `Dockerfile`, Markdown, and
+GitHub Actions workflow file, schema-validates common config files
+(`.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs), and — when an
+`.editorconfig` is present — verifies every tracked file against it, then exits
 non-zero if any check fails. It is built for CI pipelines: no per-project linter
 installs, no juggling tool versions, no bespoke setup — just `docker run`.
 
@@ -43,8 +49,9 @@ checks in continuous integration.**
 
 ## Highlights
 
-- **Five linters, one image.** YAML, shell, `Dockerfile`, Markdown, and Lua are
-  all covered by a single pull.
+- **Eight checks, one image.** YAML, shell, `Dockerfile`, Markdown, Lua, GitHub
+  Actions workflows, schema-backed config files, and `.editorconfig` conformance
+  are all covered by a single pull.
 - **Zero setup to start.** Sensible defaults work out of the box; every linter
   still honors its own config file when you want to tune it.
 - **CI-native.** A single `lint-extras` command lints an entire repository and
@@ -62,6 +69,9 @@ checks in continuous integration.**
 | [hadolint](https://github.com/hadolint/hadolint) | 2.14.0 | `Dockerfile` |
 | [markdownlint (mdl)](https://github.com/markdownlint/markdownlint) | 0.17.0 | Markdown (`*.md`, `*.markdown`) |
 | [luacheck](https://github.com/lunarmodules/luacheck) | 1.2.0 | Lua (`*.lua`) |
+| [actionlint](https://github.com/rhysd/actionlint) | 1.7.12 | GitHub Actions workflows (`.github/workflows/*.yml`) |
+| [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.37.4 | Schema validation: `.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs |
+| [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 3.8.0 | `.editorconfig` conformance (all tracked files) |
 
 Built on `python:3-alpine3.24`.
 
@@ -74,7 +84,7 @@ available inside the container — the linters enumerate files with `git ls-file
 docker run --rm \
   -v "$PWD":/code \
   -v "$PWD"/.git:/code/.git \
-  zaventh/lintorama:5
+  zaventh/lintorama:6
 ```
 
 The image works out of `/code` (its `WORKDIR`), which is already registered as a
@@ -91,7 +101,7 @@ repository and fail the job on any lint error.
 
 ```yaml
 lint:
-  image: zaventh/lintorama:5
+  image: zaventh/lintorama:6
   script:
     - lint-extras
 ```
@@ -109,7 +119,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/code \
             -v "$PWD"/.git:/code/.git \
-            zaventh/lintorama:5
+            zaventh/lintorama:6
 ```
 
 ### Any other CI (generic Docker)
@@ -118,7 +128,7 @@ jobs:
 docker run --rm \
   -v "$PWD":/code \
   -v "$PWD"/.git:/code/.git \
-  zaventh/lintorama:5
+  zaventh/lintorama:6
 ```
 
 ## What it checks
@@ -128,12 +138,15 @@ working directory (it uses `git ls-files`), so the target must be a Git
 repository. In order, it:
 
 1. Runs `yamllint -s` (strict) over all tracked `*.yml` / `*.yaml` files.
+1. Schema-validates well-known config files against their published schemas with `check-jsonschema`, when present: `.gitlab-ci.yml`, `.github/dependabot.yml`, Renovate config (`renovate.json`, `.renovaterc`, …), and `.readthedocs.yaml`.
+1. Runs `actionlint` over all tracked `.github/workflows/*.yml` / `*.yaml` files (delegating embedded `run:` scripts to the bundled ShellCheck).
 1. If a `package.json` exists, requires a `yarn.lock` or `package-lock.json` to accompany it.
 1. Runs `shellcheck` over all tracked `*.sh` / `*.bash` files.
 1. Runs `luacheck` over all tracked `*.lua` files.
 1. Runs `hadolint` against `Dockerfile`, if present.
 1. Requires a `README.md` (case-sensitive) to exist.
 1. Runs `mdl` over all tracked `*.md` / `*.markdown` files.
+1. If an `.editorconfig` exists, runs `editorconfig-checker` to verify every tracked file conforms to it.
 
 The exit code is the sum of the individual linter results — any failure fails
 the run.
@@ -148,8 +161,13 @@ repository root, so consumers can tune the rules without changing this image:
 | `.yamllint` | yamllint |
 | `.hadolint.yaml` | hadolint |
 | `.mdlrc` | markdownlint |
+| `.github/actionlint.yaml` | actionlint |
+| `.editorconfig` | editorconfig-checker (also the file it enforces) |
 
-The config files in this repository are the ones `lintorama` applies to itself.
+The `.yamllint`, `.hadolint.yaml`, `.mdlrc`, and `.editorconfig` files in this
+repository are the ones `lintorama` applies to itself. `check-jsonschema` needs
+no configuration — it picks each file's schema by name — and
+`editorconfig-checker` only runs when the repository provides an `.editorconfig`.
 
 ## Image tags
 
@@ -158,24 +176,27 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `5.3.0` | Exact, immutable version |
-| `5` | Rolling major tag (recommended for most pipelines) |
+| `6.0.0` | Exact, immutable version |
+| `6` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
 ## FAQ
 
 **What is lintorama?**
 lintorama is a Docker image that bundles yamllint, ShellCheck, hadolint,
-markdownlint (mdl), and luacheck behind a single command, `lint-extras`, for
-linting a Git repository in CI pipelines.
+markdownlint (mdl), luacheck, actionlint, check-jsonschema, and
+editorconfig-checker behind a single command, `lint-extras`, for linting a Git
+repository in CI pipelines.
 
 **Which linters does lintorama include?**
-Five: yamllint (YAML), ShellCheck (shell scripts), hadolint (`Dockerfile`),
-markdownlint / mdl (Markdown), and luacheck (Lua). See
+Eight: yamllint (YAML), ShellCheck (shell scripts), hadolint (`Dockerfile`),
+markdownlint / mdl (Markdown), luacheck (Lua), actionlint (GitHub Actions
+workflows), check-jsonschema (schema validation for CI and tooling config), and
+editorconfig-checker (`.editorconfig` conformance). See
 [Bundled linters](#bundled-linters) for exact versions.
 
 **How do I run lintorama locally?**
-Run `docker run --rm -v "$PWD":/code -v "$PWD"/.git:/code/.git zaventh/lintorama:5`
+Run `docker run --rm -v "$PWD":/code -v "$PWD"/.git:/code/.git zaventh/lintorama:6`
 from the root of any Git repository. See [Quick start](#quick-start).
 
 **How do I use lintorama in CI?**
@@ -205,7 +226,7 @@ lives on [GitHub](https://github.com/zaventh/lintorama).
 
 The image is built and pushed by `.gitlab-ci.yml` on every push to the default
 branch. To cut a new release, bump the `BUILD_VER` variable in that file
-(semver, e.g. `5.3.0`); the pipeline publishes the full version, the major tag,
+(semver, e.g. `6.0.0`); the pipeline publishes the full version, the major tag,
 and `latest`, stamps the version, build date, and commit SHA into the image's
 OCI labels, and syncs this README to the Docker Hub repository description.
 
