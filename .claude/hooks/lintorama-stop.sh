@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Stop hook: enforce the `lintorama` container (bundled yamllint + shellcheck + hadolint +
-# markdownlint + luacheck) before Claude finishes a turn — this repo dogfoods its own image.
+# Stop hook: enforce the `lintorama` container (bundled yamllint + shellcheck + hadolint + markdownlint +
+# luacheck + actionlint + check-jsonschema + editorconfig-checker) before Claude finishes a turn — this
+# repo dogfoods its own image.
 #
 # lintorama clean        -> exit 0, Claude stops normally.
 # lintorama finds issues -> exit 2 with the findings on stderr, which Claude Code feeds back to the
@@ -22,7 +23,7 @@ project_dir="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 cd "$project_dir" || exit 0
 
 # The linter ships as a published image on Docker Hub; pull it once on first use.
-image="zaventh/lintorama:5"
+image="zaventh/lintorama:7"
 
 # Skip cleanly if docker is missing, or the image isn't cached and can't be pulled (don't block a turn
 # on missing tooling / no network).
