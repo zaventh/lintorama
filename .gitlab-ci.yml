@@ -21,7 +21,7 @@ stages:
 variables:
   # Published image version: baked into the OCI labels (BUILD_VER) and used as the
   # primary registry tag. Bump this for each release.
-  BUILD_VER: "6.0.0"
+  BUILD_VER: "7.0.0"
 
   # Docker Hub mirror target. Set DOCKERHUB_USER and DOCKERHUB_TOKEN as protected,
   # masked CI/CD variables (DOCKERHUB_TOKEN is a Docker Hub access token, not the
@@ -57,8 +57,12 @@ build:
     # Derive the major tag from the semver, e.g. 5.3.0 -> 5 (README pins :5 for pulls).
     - MAJOR="${BUILD_VER%%.*}"
     # Build once with three tags. $CI_JOB_STARTED_AT is already ISO8601 (no `date`).
+    # --provenance/--sbom=false: BuildKit's default attestation manifest makes the
+    # GitLab registry reject the pushed image index with MANIFEST_BLOB_UNKNOWN
+    # ("blob unknown to registry"), so publish a plain single-manifest image.
     - |
       docker build \
+        --provenance=false --sbom=false \
         --build-arg BUILD_VER="$BUILD_VER" \
         --build-arg BUILD_DATE="$CI_JOB_STARTED_AT" \
         --build-arg BUILD_SHA="$CI_COMMIT_SHA" \
