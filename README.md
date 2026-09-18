@@ -84,7 +84,7 @@ available inside the container — the linters enumerate files with `git ls-file
 docker run --rm \
   -v "$PWD":/code \
   -v "$PWD"/.git:/code/.git \
-  zaventh/lintorama:6
+  zaventh/lintorama:7
 ```
 
 The image works out of `/code` (its `WORKDIR`), which is already registered as a
@@ -101,7 +101,7 @@ repository and fail the job on any lint error.
 
 ```yaml
 lint:
-  image: zaventh/lintorama:6
+  image: zaventh/lintorama:7
   script:
     - lint-extras
 ```
@@ -119,7 +119,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/code \
             -v "$PWD"/.git:/code/.git \
-            zaventh/lintorama:6
+            zaventh/lintorama:7
 ```
 
 ### Any other CI (generic Docker)
@@ -128,7 +128,7 @@ jobs:
 docker run --rm \
   -v "$PWD":/code \
   -v "$PWD"/.git:/code/.git \
-  zaventh/lintorama:6
+  zaventh/lintorama:7
 ```
 
 ## What it checks
@@ -176,8 +176,8 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `6.0.0` | Exact, immutable version |
-| `6` | Rolling major tag (recommended for most pipelines) |
+| `7.0.0` | Exact, immutable version |
+| `7` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
 ## FAQ
@@ -196,7 +196,7 @@ editorconfig-checker (`.editorconfig` conformance). See
 [Bundled linters](#bundled-linters) for exact versions.
 
 **How do I run lintorama locally?**
-Run `docker run --rm -v "$PWD":/code -v "$PWD"/.git:/code/.git zaventh/lintorama:6`
+Run `docker run --rm -v "$PWD":/code -v "$PWD"/.git:/code/.git zaventh/lintorama:7`
 from the root of any Git repository. See [Quick start](#quick-start).
 
 **How do I use lintorama in CI?**
@@ -226,7 +226,7 @@ lives on [GitHub](https://github.com/zaventh/lintorama).
 
 The image is built and pushed by `.gitlab-ci.yml` on every push to the default
 branch. To cut a new release, bump the `BUILD_VER` variable in that file
-(semver, e.g. `6.0.0`); the pipeline publishes the full version, the major tag,
+(semver, e.g. `7.0.0`); the pipeline publishes the full version, the major tag,
 and `latest`, stamps the version, build date, and commit SHA into the image's
 OCI labels, and syncs this README to the Docker Hub repository description.
 
