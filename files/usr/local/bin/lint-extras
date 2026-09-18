@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.4.0
+# Version 3.4.1
 declare -i RESULT=0
 
 # Every file-based check enumerates via git; bail clearly if not in a work tree.
@@ -26,19 +26,25 @@ RESULT+=$?
 # schema-validate well-known config files against their published JSON Schemas.
 # check-jsonschema ships the schemas vendored, so this runs fully offline; each
 # call is a no-op unless the repo actually tracks a matching file.
+# Usage: schema_check <schema> [check-jsonschema options...] -- <pathspec>...
 schema_check() {
   local schema="$1"; shift
+  local -a opts=()
+  while [ $# -gt 0 ] && [ "$1" != '--' ]; do opts+=("$1"); shift; done
+  [ "${1:-}" != '--' ] || shift
   local matched
   mapfile -t matched < <(list_files "$@")
-  [ ${#matched[@]} -eq 0 ] || check-jsonschema --builtin-schema "$schema" -- "${matched[@]}"
+  [ ${#matched[@]} -eq 0 ] || check-jsonschema --builtin-schema "$schema" "${opts[@]}" -- "${matched[@]}"
 }
-schema_check vendor.gitlab-ci '.gitlab-ci.yml' '.gitlab-ci.yaml'
+# GitLab CI files may use the `!reference` YAML tag, which the stock YAML loader
+# rejects; the gitlab-ci data transform teaches check-jsonschema to accept it.
+schema_check vendor.gitlab-ci --data-transform gitlab-ci -- '.gitlab-ci.yml' '.gitlab-ci.yaml'
 RESULT+=$?
-schema_check vendor.dependabot '.github/dependabot.yml' '.github/dependabot.yaml'
+schema_check vendor.dependabot -- '.github/dependabot.yml' '.github/dependabot.yaml'
 RESULT+=$?
-schema_check vendor.renovate 'renovate.json' 'renovate.json5' '.renovaterc' '.renovaterc.json' '.renovaterc.json5' '.github/renovate.json' '.github/renovate.json5' '.gitlab/renovate.json' '.gitlab/renovate.json5'
+schema_check vendor.renovate -- 'renovate.json' 'renovate.json5' '.renovaterc' '.renovaterc.json' '.renovaterc.json5' '.github/renovate.json' '.github/renovate.json5' '.gitlab/renovate.json' '.gitlab/renovate.json5'
 RESULT+=$?
-schema_check vendor.readthedocs '.readthedocs.yml' '.readthedocs.yaml'
+schema_check vendor.readthedocs -- '.readthedocs.yml' '.readthedocs.yaml'
 RESULT+=$?
 
 # lint GitHub Actions workflows (run: steps are delegated to the bundled shellcheck)
