@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.3.0
+# Version 3.4.0
 declare -i RESULT=0
 
 # Every file-based check enumerates via git; bail clearly if not in a work tree.
@@ -82,7 +82,7 @@ RESULT+=$?
 
 # verify tracked files conform to .editorconfig, if the repo defines one
 if test -f .editorconfig; then
-  ec
+  editorconfig-checker
   RESULT+=$?
 fi
 
