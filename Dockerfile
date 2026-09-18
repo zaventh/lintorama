@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.3
+# syntax=docker/dockerfile:1
 FROM koalaman/shellcheck-alpine:v0.11.0 AS shellcheck
-FROM hadolint/hadolint:v2.14.0-alpine AS dockerlint
+FROM hadolint/hadolint:v2.15.1-alpine AS dockerlint
 FROM rhysd/actionlint:1.7.12 AS actionlint
-FROM mstruebing/editorconfig-checker:v3.8.0 AS editorconfig
+FROM mstruebing/editorconfig-checker:4.0.1 AS editorconfig
 
 FROM python:3-alpine3.24
 ARG BUILD_VER
@@ -20,7 +20,7 @@ LABEL org.opencontainers.image.title="lintorama" \
 COPY --from=shellcheck /bin/shellcheck /usr/local/bin/shellcheck
 COPY --from=dockerlint /bin/hadolint /usr/local/bin/hadolint
 COPY --from=actionlint /usr/local/bin/actionlint /usr/local/bin/actionlint
-COPY --from=editorconfig /usr/bin/ec /usr/local/bin/ec
+COPY --from=editorconfig /usr/bin/editorconfig-checker /usr/local/bin/editorconfig-checker
 
 COPY files /
 
@@ -28,8 +28,8 @@ RUN \
     --mount=type=cache,target=/root/.cache/pip \
     apk add --no-cache bash build-base ruby ruby-dev git \
     lua5.3-dev luarocks5.3 \
-    && gem install --no-document etc mdl:0.17.0 \
-    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.37.4 \
+    && gem install --no-document etc mdl:0.18.1 \
+    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.38.0 \
     && luarocks-5.3 install luacheck 1.2.0-1 \
     && git config --global --add safe.directory /code \
     # smoke tests
@@ -40,7 +40,7 @@ RUN \
     && luacheck -v \
     && check-jsonschema --version \
     && actionlint -version \
-    && ec -version
+    && editorconfig-checker -version
 
 ENV LUA_PATH='/usr/local/share/lua/5.3/?.lua;/usr/local/share/lua/5.3/?/init.lua;/usr/share/lua/5.3/?.lua;/usr/share/lua/5.3/?/init.lua;./?.lua;./?/init.lua'
 ENV LUA_CPATH='/usr/local/lib/lua/5.3/?.so;/usr/lib/lua/5.3/?.so;./?.so'

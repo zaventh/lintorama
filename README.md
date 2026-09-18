@@ -66,12 +66,12 @@ checks in continuous integration.**
 | --- | --- | --- |
 | [yamllint](https://github.com/adrienverge/yamllint) | 1.38.0 | YAML (`*.yml`, `*.yaml`) |
 | [ShellCheck](https://www.shellcheck.net/) | 0.11.0 | Shell scripts (`*.sh`, `*.bash`) |
-| [hadolint](https://github.com/hadolint/hadolint) | 2.14.0 | `Dockerfile` |
-| [markdownlint (mdl)](https://github.com/markdownlint/markdownlint) | 0.17.0 | Markdown (`*.md`, `*.markdown`) |
+| [hadolint](https://github.com/hadolint/hadolint) | 2.15.1 | `Dockerfile` |
+| [markdownlint (mdl)](https://github.com/markdownlint/markdownlint) | 0.18.1 | Markdown (`*.md`, `*.markdown`) |
 | [luacheck](https://github.com/lunarmodules/luacheck) | 1.2.0 | Lua (`*.lua`) |
 | [actionlint](https://github.com/rhysd/actionlint) | 1.7.12 | GitHub Actions workflows (`.github/workflows/*.yml`) |
-| [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.37.4 | Schema validation: `.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs |
-| [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 3.8.0 | `.editorconfig` conformance (all tracked files) |
+| [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.38.0 | Schema validation: `.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs |
+| [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 4.0.1 | `.editorconfig` conformance (all tracked files) |
 
 Built on `python:3-alpine3.24`.
 
