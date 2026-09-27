@@ -14,12 +14,14 @@
 # Docker Hub, so nothing is rebuilt and the Docker Hub token never leaves the Linux runner.
 #
 # RUNNER REQUIREMENTS:
-#   Linux (untagged jobs) — a traditional Docker-executor runner using Docker socket binding: no dind, no
-#   shared daemon. The jobs talk to the host Docker daemon through the bind-mounted socket, so the
-#   runner's config.toml must mount it:
+#   Linux (jobs tagged `docker-socket`) — a traditional Docker-executor runner using Docker socket
+#   binding: no dind, no shared daemon. The jobs talk to the host Docker daemon through the bind-mounted
+#   socket, so the runner's config.toml must mount it:
 #       [runners.docker]
 #         volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]
-#   Until that is in place the Linux docker jobs fail fast at the `docker info` check.
+#   Only a runner with that mount may carry the tag: an untagged job can land on any instance runner,
+#   and one without the socket fails fast at the `docker info` check. lint:amd64 and
+#   dockerhub-description need no daemon and stay untagged.
 #
 #   macOS (jobs tagged `macos`) — a shell-executor runner on Apple Silicon with a Docker runtime (Docker
 #   Desktop, OrbStack, Colima, ...) running for the runner's user. There is no job image: the jobs use
@@ -56,6 +58,8 @@ variables:
 
 # Linux runner: docker CLI image talking to the bind-mounted host daemon.
 .linux-docker:
+  tags:
+    - docker-socket
   image: "docker:$DOCKER_VERSION"
   variables:
     # Use the bind-mounted host daemon over its unix socket; no dind, no TLS.
