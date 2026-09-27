@@ -1,102 +1,163 @@
 ---
 # .gitlab-ci.yml — docker/lintorama
 #
-# Self-contained pipeline (no external template includes). Builds the lint-extras
-# image and pushes semver / major / latest tags to this project's GitLab Container
-# Registry ($CI_REGISTRY_IMAGE), then lints this repo with the freshly built image.
+# Self-contained pipeline (no external template includes). Builds the lint-extras image natively for
+# linux/amd64 and linux/arm64, lints this repo with each, then publishes semver / major / latest as
+# multi-arch tags to this project's GitLab Container Registry ($CI_REGISTRY_IMAGE) and Docker Hub:
 #
-# RUNNER REQUIREMENT (Docker socket binding):
-#   This is a traditional Docker-executor runner — no dind, no shared daemon. The
-#   build job talks to the host Docker daemon through the bind-mounted socket, so
-#   the runner's config.toml must mount it:
+#   build:amd64 ── lint:amd64 ──┐
+#                               ├── publish ── dockerhub-description
+#   build:arm64 ── lint:arm64 ──┘
+#
+# Each build pushes a single-platform image to $CI_REGISTRY_IMAGE:$BUILD_VER-<arch>. `publish` stitches
+# the two into one image index with `docker buildx imagetools create`, which also copies the blobs to
+# Docker Hub, so nothing is rebuilt and the Docker Hub token never leaves the Linux runner.
+#
+# RUNNER REQUIREMENTS:
+#   Linux (untagged jobs) — a traditional Docker-executor runner using Docker socket binding: no dind, no
+#   shared daemon. The jobs talk to the host Docker daemon through the bind-mounted socket, so the
+#   runner's config.toml must mount it:
 #       [runners.docker]
 #         volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]
-#   Until that is in place the build job fails fast at the `docker info` check.
+#   Until that is in place the Linux docker jobs fail fast at the `docker info` check.
+#
+#   macOS (jobs tagged `macos`) — a shell-executor runner on Apple Silicon with a Docker runtime (Docker
+#   Desktop, OrbStack, Colima, ...) running for the runner's user. There is no job image: the jobs use
+#   whatever daemon the host's docker context points at, and `lint:arm64` bind-mounts the build
+#   directory, so the runner's builds_dir must be inside Docker's file sharing (e.g. under /Users).
+
+workflow:
+  rules:
+    # Build + publish from the default branch on every push ...
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # ... and when started manually via "Run pipeline".
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 stages:
   - build
   - lint
+  - publish
   - docs
 
 variables:
   # Published image version: baked into the OCI labels (BUILD_VER) and used as the
   # primary registry tag. Bump this for each release.
-  BUILD_VER: "7.0.1"
+  BUILD_VER: "7.1.0"
 
   # Docker Hub mirror target. Set DOCKERHUB_USER and DOCKERHUB_TOKEN as protected,
   # masked CI/CD variables (DOCKERHUB_TOKEN is a Docker Hub access token, not the
   # account password) so every release is pushed to the public registry too.
   DOCKERHUB_IMAGE: "docker.io/zaventh/lintorama"
 
-  # Pinned docker CLI image version.
+  # Pinned docker CLI image version (Linux jobs only; the macOS jobs use the host's CLI).
   DOCKER_VERSION: "28.3"
 
-  # Use the bind-mounted host daemon over its unix socket; no dind, no TLS.
-  # (Overrides the tcp://docker:2375 DOCKER_HOST the runner injects by default.)
-  DOCKER_HOST: "unix:///var/run/docker.sock"
-  DOCKER_TLS_CERTDIR: ""
   DOCKER_BUILDKIT: "1"
 
-build:
-  stage: build
+# Linux runner: docker CLI image talking to the bind-mounted host daemon.
+.linux-docker:
   image: "docker:$DOCKER_VERSION"
-  interruptible: true
-  rules:
-    # Build + push from the default branch (master) on every push ...
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    # ... and when started manually via "Run pipeline".
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  variables:
+    # Use the bind-mounted host daemon over its unix socket; no dind, no TLS.
+    # (Overrides the tcp://docker:2375 DOCKER_HOST the runner injects by default.)
+    DOCKER_HOST: "unix:///var/run/docker.sock"
+    DOCKER_TLS_CERTDIR: ""
   before_script:
     - 'docker info >/dev/null 2>&1 || { echo "host docker socket not reachable at $DOCKER_HOST — is the runner configured with volumes=[\"/var/run/docker.sock:/var/run/docker.sock\"]?"; ls -l /var/run/docker.sock 2>&1 || true; exit 1; }'
     # CI_REGISTRY_USER=gitlab-ci-token, CI_REGISTRY_PASSWORD=$CI_JOB_TOKEN: job-token
     # auth scoped to this project's registry, no long-lived credentials.
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    # Docker Hub login for the public mirror push.
-    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin docker.io
+
+# macOS runner: shell executor on the Mac itself, using the host's Docker runtime.
+.macos:
+  tags:
+    - macos
+  before_script:
+    - 'docker info >/dev/null 2>&1 || { echo "docker daemon not reachable on the macOS runner — is Docker Desktop (or OrbStack/Colima) installed, on the PATH, and running for the runner user?"; exit 1; }'
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  after_script:
+    # A shell job's login lands in the runner user's own docker config (or keychain); don't leave it there.
+    - docker logout "$CI_REGISTRY"
+
+.build:
+  stage: build
+  interruptible: true
   script:
-    # Derive the major tag from the semver, e.g. 5.3.0 -> 5 (README pins :5 for pulls).
-    - MAJOR="${BUILD_VER%%.*}"
-    # Build once with three tags. $CI_JOB_STARTED_AT is already ISO8601 (no `date`).
-    # --provenance/--sbom=false: BuildKit's default attestation manifest makes the
-    # GitLab registry reject the pushed image index with MANIFEST_BLOB_UNKNOWN
-    # ("blob unknown to registry"), so publish a plain single-manifest image.
+    # One single-platform image per runner, built natively. $CI_PIPELINE_CREATED_AT is already ISO8601
+    # (no `date`) and shared by both arches, so they carry the same created label.
+    # --provenance/--sbom=false: BuildKit's default attestation manifest makes the GitLab registry reject
+    # the pushed image index with MANIFEST_BLOB_UNKNOWN ("blob unknown to registry"), so push a plain
+    # manifest and let `publish` assemble the index.
     - |
       docker build \
+        --platform "linux/$ARCH" \
         --provenance=false --sbom=false \
         --build-arg BUILD_VER="$BUILD_VER" \
-        --build-arg BUILD_DATE="$CI_JOB_STARTED_AT" \
+        --build-arg BUILD_DATE="$CI_PIPELINE_CREATED_AT" \
         --build-arg BUILD_SHA="$CI_COMMIT_SHA" \
+        --tag "$CI_REGISTRY_IMAGE:$BUILD_VER-$ARCH" \
+        .
+    - docker push "$CI_REGISTRY_IMAGE:$BUILD_VER-$ARCH"
+
+build:amd64:
+  extends: [.linux-docker, .build]
+  variables:
+    ARCH: amd64
+
+build:arm64:
+  extends: [.macos, .build]
+  variables:
+    ARCH: arm64
+
+lint:amd64:
+  stage: lint
+  needs: ["build:amd64"]
+  # Run the just-pushed image AS the job image (GitLab pulls it with the job token).
+  # entrypoint: [""] overrides the image's ENTRYPOINT so we invoke the linter ourselves.
+  image:
+    name: "$CI_REGISTRY_IMAGE:$BUILD_VER-amd64"
+    entrypoint: [""]
+  variables:
+    GIT_STRATEGY: clone  # lint-extras relies on `git ls-files`
+  script:
+    # The Dockerfile only whitelists /code; CI checks out to $CI_PROJECT_DIR.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - /usr/local/bin/lint-extras
+
+lint:arm64:
+  extends: .macos
+  stage: lint
+  needs: ["build:arm64"]
+  script:
+    # Run the pushed image natively on Apple Silicon with the README's Quick start command.
+    - |
+      docker run --rm --pull always --platform linux/arm64 \
+        -v "$CI_PROJECT_DIR":/code \
+        -v "$CI_PROJECT_DIR/.git":/code/.git \
+        "$CI_REGISTRY_IMAGE:$BUILD_VER-arm64"
+
+publish:
+  extends: .linux-docker
+  stage: publish
+  needs: ["lint:amd64", "lint:arm64"]
+  script:
+    # Docker Hub login for the public mirror push.
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin docker.io
+    # Derive the major tag from the semver, e.g. 7.1.0 -> 7 (README pins :7 for pulls).
+    - MAJOR="${BUILD_VER%%.*}"
+    # One index over the two per-arch images under every public tag. imagetools copies the blobs from
+    # the GitLab registry into Docker Hub registry-to-registry: no rebuild, no pull into the daemon.
+    - |
+      docker buildx imagetools create \
         --tag "$CI_REGISTRY_IMAGE:$BUILD_VER" \
         --tag "$CI_REGISTRY_IMAGE:$MAJOR" \
         --tag "$CI_REGISTRY_IMAGE:latest" \
         --tag "$DOCKERHUB_IMAGE:$BUILD_VER" \
         --tag "$DOCKERHUB_IMAGE:$MAJOR" \
         --tag "$DOCKERHUB_IMAGE:latest" \
-        .
-    - docker push "$CI_REGISTRY_IMAGE:$BUILD_VER"
-    - docker push "$CI_REGISTRY_IMAGE:$MAJOR"
-    - docker push "$CI_REGISTRY_IMAGE:latest"
-    - docker push "$DOCKERHUB_IMAGE:$BUILD_VER"
-    - docker push "$DOCKERHUB_IMAGE:$MAJOR"
-    - docker push "$DOCKERHUB_IMAGE:latest"
-
-lint:
-  stage: lint
-  needs: ["build"]
-  # Run the just-pushed image AS the job image (GitLab pulls it with the job token).
-  # entrypoint: [""] overrides the image's ENTRYPOINT so we invoke the linter ourselves.
-  image:
-    name: "$CI_REGISTRY_IMAGE:$BUILD_VER"
-    entrypoint: [""]
-  variables:
-    GIT_STRATEGY: clone  # lint-extras relies on `git ls-files`
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-  script:
-    # The Dockerfile only whitelists /code; CI checks out to $CI_PROJECT_DIR.
-    - git config --global --add safe.directory "$CI_PROJECT_DIR"
-    - /usr/local/bin/lint-extras
+        "$CI_REGISTRY_IMAGE:$BUILD_VER-amd64" \
+        "$CI_REGISTRY_IMAGE:$BUILD_VER-arm64"
+    - docker buildx imagetools inspect "$DOCKERHUB_IMAGE:$BUILD_VER"
 
 # Sync this repo's README to the Docker Hub repository description on each release.
 # NOTE: the Docker Hub description API needs a JWT minted from /v2/users/login/.
@@ -106,10 +167,7 @@ lint:
 dockerhub-description:
   stage: docs
   image: alpine:3.24
-  needs: ["build"]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  needs: ["publish"]
   before_script:
     - apk add --no-cache curl jq
   script:

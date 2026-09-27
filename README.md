@@ -59,6 +59,8 @@ checks in continuous integration.**
 - **Reproducible.** Tool versions are pinned in the image, so every run uses the
   exact same linters everywhere.
 - **Small footprint.** Built on `python:3-alpine3.24`.
+- **Native on amd64 and arm64.** Every tag is a multi-arch image, so it runs
+  without emulation on x86-64 CI runners and on Apple Silicon Macs alike.
 
 ## Bundled linters
 
@@ -176,9 +178,12 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `7.0.0` | Exact, immutable version |
+| `7.1.0` | Exact, immutable version |
 | `7` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
+
+Each tag is a multi-arch image for `linux/amd64` and `linux/arm64`; Docker picks
+the right one for the host automatically.
 
 ## FAQ
 
@@ -217,6 +222,10 @@ repository with its `.git` directory available inside the container.
 The exit code is the sum of the individual linters' results, so a non-zero exit
 means at least one check failed — exactly what a CI pipeline needs.
 
+**Does lintorama run on Apple Silicon or other arm64 hosts?**
+Yes. Every tag includes a native `linux/arm64` image next to `linux/amd64`, so
+Docker on an Apple Silicon Mac runs it without Rosetta or QEMU emulation.
+
 **Where is the image published?**
 On Docker Hub as
 [`zaventh/lintorama`](https://hub.docker.com/r/zaventh/lintorama). The source
@@ -225,10 +234,14 @@ lives on [GitHub](https://github.com/zaventh/lintorama).
 ## Building and releasing
 
 The image is built and pushed by `.gitlab-ci.yml` on every push to the default
-branch. To cut a new release, bump the `BUILD_VER` variable in that file
-(semver, e.g. `7.0.0`); the pipeline publishes the full version, the major tag,
-and `latest`, stamps the version, build date, and commit SHA into the image's
-OCI labels, and syncs this README to the Docker Hub repository description.
+branch. Each architecture is built natively on its own runner — `linux/amd64` on
+a Linux runner, `linux/arm64` on an Apple Silicon Mac runner (tagged `macos`) —
+and linted with that same image before anything is published. To cut a new
+release, bump the `BUILD_VER` variable in that file (semver, e.g. `7.1.0`); the
+pipeline then combines both builds into one multi-arch image, publishes it as the
+full version, the major tag, and `latest`, stamps the version, build date, and
+commit SHA into the image's OCI labels, and syncs this README to the Docker Hub
+repository description.
 
 ## License
 
