@@ -79,19 +79,47 @@ Built on `python:3-alpine3.24`.
 
 ## Quick start
 
-The target must be a local Git checkout, and its `.git` directory has to be
+The target must be a local Git checkout, and its Git directory has to be
 available inside the container — the linters enumerate files with `git ls-files`:
 
 ```sh
+gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
-  -v "$PWD"/.git:/code/.git \
+  -v "$gitdir":"$gitdir" \
   zaventh/lintorama:7
 ```
 
 The image works out of `/code` (its `WORKDIR`), which is already registered as a
 Git `safe.directory`. That is the only requirement — run the command from the
-root of any Git repository and it lints every supported file type.
+root of any Git repository, or any of its worktrees, and it lints every
+supported file type.
+
+### Git worktrees
+
+In a regular checkout, `.git` is a directory and the first mount already brings
+it into `/code`. In a linked worktree (`git worktree add`), `.git` is a file
+pointing into the main repository's Git directory, for example
+`gitdir: /home/me/project/.git/worktrees/feature`. The second mount puts that
+directory at the same path inside the container, so the pointer resolves. In a
+regular checkout it's redundant but harmless, so the same command works in both
+cases.
+
+Worktrees created with `git worktree add --relative-paths` (or
+`worktree.useRelativePaths`) store a relative pointer instead, which only
+resolves if the worktree keeps its host path in the container. Mount it there
+and mark that path as a Git `safe.directory`:
+
+```sh
+gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
+docker run --rm \
+  -v "$PWD":"$PWD" -w "$PWD" \
+  -v "$gitdir":"$gitdir" \
+  -e GIT_CONFIG_COUNT=1 \
+  -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0="$PWD" \
+  zaventh/lintorama:7
+```
 
 ## Continuous integration
 
@@ -118,18 +146,20 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run lintorama
         run: |
+          gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
           docker run --rm \
             -v "$PWD":/code \
-            -v "$PWD"/.git:/code/.git \
+            -v "$gitdir":"$gitdir" \
             zaventh/lintorama:7
 ```
 
 ### Any other CI (generic Docker)
 
 ```sh
+gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
-  -v "$PWD"/.git:/code/.git \
+  -v "$gitdir":"$gitdir" \
   zaventh/lintorama:7
 ```
 
@@ -178,7 +208,7 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `7.1.0` | Exact, immutable version |
+| `7.1.1` | Exact, immutable version |
 | `7` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
@@ -201,8 +231,9 @@ editorconfig-checker (`.editorconfig` conformance). See
 [Bundled linters](#bundled-linters) for exact versions.
 
 **How do I run lintorama locally?**
-Run `docker run --rm -v "$PWD":/code -v "$PWD"/.git:/code/.git zaventh/lintorama:7`
-from the root of any Git repository. See [Quick start](#quick-start).
+Run the [Quick start](#quick-start) command from the root of any Git repository
+or worktree: it mounts the checkout at `/code` and the repository's Git
+directory at its host path.
 
 **How do I use lintorama in CI?**
 In GitLab CI, use it as the job `image` and call `lint-extras`. In GitHub
@@ -216,7 +247,9 @@ file (`.yamllint`, `.hadolint.yaml`, `.mdlrc`) when present. See
 
 **Why does lintorama need the `.git` directory?**
 `lint-extras` discovers files with `git ls-files`, so the target must be a Git
-repository with its `.git` directory available inside the container.
+repository with its Git directory available inside the container. For a
+worktree, that means the main repository's Git directory too. See
+[Git worktrees](#git-worktrees).
 
 **How does lintorama report failures?**
 The exit code is the sum of the individual linters' results, so a non-zero exit

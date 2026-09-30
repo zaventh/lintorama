@@ -30,10 +30,15 @@ image="zaventh/lintorama:7"
 command -v docker >/dev/null 2>&1 || exit 0
 docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null 2>&1 || exit 0
 
-output=$(docker run --rm \
-  -v "$project_dir":/code \
-  -v "$project_dir"/.git:/code/.git \
-  "$image" 2>&1)
+# Mount the repo's shared Git dir at its host path so a worktree's `.git` file (which points into
+# it) resolves inside the container. Only mount it if git finds one: docker would otherwise create
+# the missing host path as an empty root-owned directory.
+mounts=(-v "$project_dir":/code)
+if gitdir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  mounts+=(-v "$gitdir":"$gitdir")
+fi
+
+output=$(docker run --rm "${mounts[@]}" "$image" 2>&1)
 status=$?
 
 if [ "$status" -ne 0 ]; then

@@ -1,10 +1,32 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.4.1
+# Version 3.4.2
 declare -i RESULT=0
 
 # Every file-based check enumerates via git; bail clearly if not in a work tree.
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # A linked worktree (`git worktree add`) has a .git *file* pointing into the
+  # main repository's Git dir, which mounting only the worktree doesn't bring in.
+  if [ -f .git ]; then
+    gitdir=$(sed -n 's/^gitdir: //p' .git)
+    if [ -n "$gitdir" ] && [ ! -d "$gitdir" ]; then
+      {
+        echo "lint-extras: .git points to $gitdir, which is not mounted in the container."
+        if [[ $gitdir == /* ]]; then
+          echo 'This looks like a Git worktree; mount the repository'\''s Git dir at its host path:'
+          # shellcheck disable=SC2016 # printed for the user to run on the host
+          echo '  gitdir=$(git rev-parse --path-format=absolute --git-common-dir)'
+          # shellcheck disable=SC2016
+          echo '  docker run --rm -v "$PWD":/code -v "$gitdir":"$gitdir" zaventh/lintorama:7'
+        else
+          echo 'This looks like a worktree with a relative link (--relative-paths); mount it at'
+          echo 'its host path rather than /code, along with the repository'\''s Git dir.'
+        fi
+        echo 'See https://github.com/zaventh/lintorama#git-worktrees'
+      } >&2
+      exit 2
+    fi
+  fi
   echo 'lint-extras: not inside a Git working tree' >&2
   exit 2
 fi
