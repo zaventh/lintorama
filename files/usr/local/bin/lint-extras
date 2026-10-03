@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.5.0
+# Version 3.6.0
 declare -i RESULT=0
 
 usage() {
@@ -50,7 +50,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
           # shellcheck disable=SC2016 # printed for the user to run on the host
           echo '  gitdir=$(git rev-parse --path-format=absolute --git-common-dir)'
           # shellcheck disable=SC2016
-          echo '  docker run --rm -v "$PWD":/code -v "$gitdir":"$gitdir" zaventh/lintorama:8'
+          echo '  docker run --rm -v "$PWD":/code -v "$gitdir":"$gitdir" zaventh/lintorama:9'
         else
           echo 'This looks like a worktree with a relative link (--relative-paths); mount it at'
           echo 'its host path rather than /code, along with the repository'\''s Git dir.'
@@ -64,23 +64,39 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 2
 fi
 
+# Package-manager install directories, skipped at any depth even when tracked or
+# not gitignored: npm/Yarn/pnpm, Bower, jspm, Go/Composer/Bundler (vendor),
+# Python virtualenvs and tox/nox, CocoaPods, Carthage, SwiftPM, Gradle, Dart,
+# Elm, and Terraform.
+dependency_re='(^|/)(node_modules|bower_components|jspm_packages|\.yarn|\.pnpm-store|vendor|\.venv|venv|site-packages|__pypackages__|\.tox|\.nox|Pods|Carthage|\.build|\.gradle|\.dart_tool|elm-stuff|\.terraform)/'
+
 # List tracked + untracked (non-ignored) files matching the given pathspecs,
-# dropping any that no longer exist on disk (e.g. tracked-but-deleted).
+# skipping dependency directories, files deleted from disk, and entries that
+# aren't files (submodules, symlinks to directories). Dependency directories are
+# filtered here, not with exclude pathspecs, which git ls-files mishandles when
+# they lie outside the directory the other pathspecs share: `.github/workflows/*.yml`
+# plus `:!**/node_modules/**` lists nothing. git also warns about pathspec
+# directories that don't exist, which is expected here.
 list_files() {
   local f
-  git ls-files --cached --others --exclude-standard "$@" | while IFS= read -r f; do
-    [ -e "$f" ] && printf '%s\n' "$f"
-  done
+  git ls-files --cached --others --exclude-standard "$@" \
+    2> >(grep -v '^warning: could not open directory' >&2) |
+    while IFS= read -r f; do
+      [[ $f =~ $dependency_re ]] && continue
+      [ -f "$f" ] && printf '%s\n' "$f"
+    done
 }
 
-# lint yaml files
-mapfile -t files < <(list_files '*.yml' '*.yaml' ':!:.agents/skills/*')
+# lint yaml files, except generated lockfiles
+mapfile -t files < <(list_files '*.yml' '*.yaml' ':!:.agents/skills/*' \
+  ':(exclude,glob)**/pnpm-lock.yaml' ':(exclude,glob)**/conda-lock.yml')
 [ ${#files[@]} -eq 0 ] || yamllint -s -- "${files[@]}"
 RESULT+=$?
 
 # schema-validate well-known config files against their published JSON Schemas.
 # check-jsonschema ships the schemas vendored, so this runs fully offline; each
-# call is a no-op unless the repo actually tracks a matching file.
+# call is a no-op unless the repo actually tracks a matching file. File patterns
+# follow check-jsonschema's own pre-commit hooks.
 # Usage: schema_check <schema> [check-jsonschema options...] -- <pathspec>...
 schema_check() {
   local schema="$1"; shift
@@ -90,33 +106,118 @@ schema_check() {
   local matched
   mapfile -t matched < <(list_files "$@")
   [ ${#matched[@]} -eq 0 ] || check-jsonschema --builtin-schema "$schema" "${opts[@]}" -- "${matched[@]}"
+  RESULT+=$?
 }
 # GitLab CI files may use the `!reference` YAML tag, which the stock YAML loader
 # rejects; the gitlab-ci data transform teaches check-jsonschema to accept it.
 schema_check vendor.gitlab-ci --data-transform gitlab-ci -- '.gitlab-ci.yml' '.gitlab-ci.yaml'
-RESULT+=$?
 schema_check vendor.dependabot -- '.github/dependabot.yml' '.github/dependabot.yaml'
-RESULT+=$?
 schema_check vendor.renovate -- 'renovate.json' 'renovate.json5' '.renovaterc' '.renovaterc.json' '.renovaterc.json5' '.github/renovate.json' '.github/renovate.json5' '.gitlab/renovate.json' '.gitlab/renovate.json5'
-RESULT+=$?
 schema_check vendor.readthedocs -- '.readthedocs.yml' '.readthedocs.yaml'
+# GitHub repository metadata
+schema_check vendor.github-actions -- 'action.yml' 'action.yaml' \
+  ':(glob).github/actions/**/action.yml' ':(glob).github/actions/**/action.yaml'
+schema_check vendor.github-issue-forms -- \
+  ':(glob).github/ISSUE_TEMPLATE/*.yml' ':(glob).github/ISSUE_TEMPLATE/*.yaml' \
+  ':!:.github/ISSUE_TEMPLATE/config.yml' ':!:.github/ISSUE_TEMPLATE/config.yaml'
+schema_check vendor.github-issue-config -- '.github/ISSUE_TEMPLATE/config.yml' '.github/ISSUE_TEMPLATE/config.yaml'
+schema_check vendor.github-discussion -- \
+  ':(glob).github/DISCUSSION_TEMPLATE/*.yml' ':(glob).github/DISCUSSION_TEMPLATE/*.yaml'
+# Docker Compose files at any depth, including variants such as compose.prod.yaml
+# and docker-compose.override.yml. check-jsonschema can't load Compose's !reset and
+# !override merge tags, so files that use them are skipped.
+files=()
+while IFS= read -r f; do
+  grep -qE '(^|[[:space:]])!(reset|override)([[:space:]]|$)' "$f" || files+=("$f")
+done < <(list_files \
+  ':(glob)**/compose.yml' ':(glob)**/compose.yaml' ':(glob)**/compose.*.yml' ':(glob)**/compose.*.yaml' \
+  ':(glob)**/docker-compose.yml' ':(glob)**/docker-compose.yaml' \
+  ':(glob)**/docker-compose.*.yml' ':(glob)**/docker-compose.*.yaml')
+[ ${#files[@]} -eq 0 ] || check-jsonschema --builtin-schema vendor.compose-spec -- "${files[@]}"
 RESULT+=$?
+# other CI systems
+schema_check vendor.azure-pipelines --data-transform azure-pipelines --regex-variant nonunicode -- \
+  'azure-pipelines.yml' 'azure-pipelines.yaml' '.azure-pipelines.yml' '.azure-pipelines.yaml'
+schema_check vendor.bamboo-spec -- ':(glob)bamboo-specs/**/*.yml' ':(glob)bamboo-specs/**/*.yaml'
+schema_check vendor.bitbucket-pipelines -- ':(glob)**/bitbucket-pipelines.yml' ':(glob)**/bitbucket-pipelines.yaml'
+schema_check vendor.buildkite -- \
+  ':(glob)buildkite.yml' ':(glob)buildkite.yaml' ':(glob)buildkite.json' \
+  ':(glob)buildkite.*.yml' ':(glob)buildkite.*.yaml' ':(glob)buildkite.*.json' \
+  ':(glob)**/.buildkite/pipeline.yml' ':(glob)**/.buildkite/pipeline.yaml' ':(glob)**/.buildkite/pipeline.json' \
+  ':(glob)**/.buildkite/pipeline.*.yml' ':(glob)**/.buildkite/pipeline.*.yaml' ':(glob)**/.buildkite/pipeline.*.json'
+schema_check vendor.circle-ci -- '.circleci/config.yml' '.circleci/config.yaml'
+schema_check vendor.cloudbuild -- 'cloudbuild.yml' 'cloudbuild.yaml' 'cloudbuild.json'
+schema_check vendor.travis -- '.travis.yml' '.travis.yaml'
+schema_check vendor.woodpecker-ci -- '.woodpecker.yml' '.woodpecker.yaml' \
+  ':(glob).woodpecker/**/*.yml' ':(glob).woodpecker/**/*.yaml'
+# other tooling config
+schema_check vendor.changie -- '.changie.yml' '.changie.yaml'
+schema_check vendor.citation-file-format -- 'CITATION.cff'
+schema_check vendor.codecov -- \
+  'codecov.yml' 'codecov.yaml' '.codecov.yml' '.codecov.yaml' \
+  '.github/codecov.yml' '.github/codecov.yaml' '.github/.codecov.yml' '.github/.codecov.yaml' \
+  'dev/codecov.yml' 'dev/codecov.yaml' 'dev/.codecov.yml' 'dev/.codecov.yaml'
+schema_check vendor.meltano -- ':(glob)**/meltano.yml' ':(glob)meltano-manifest.json' ':(glob)meltano-manifest.*.json'
+schema_check vendor.mergify -- '.mergify.yml' '.mergify/config.yml' '.github/mergify.yml'
+schema_check vendor.snapcraft -- ':(glob)**/snapcraft.yaml'
+schema_check vendor.taskfile -- \
+  'Taskfile.yml' 'Taskfile.yaml' 'taskfile.yml' 'taskfile.yaml' \
+  'Taskfile.dist.yml' 'Taskfile.dist.yaml' 'taskfile.dist.yml' 'taskfile.dist.yaml'
 
 # lint GitHub Actions workflows (run: steps are delegated to the bundled shellcheck)
 mapfile -t files < <(list_files '.github/workflows/*.yml' '.github/workflows/*.yaml')
 [ ${#files[@]} -eq 0 ] || actionlint "${files[@]}"
 RESULT+=$?
 
-# ensure a lockfile
+# ensure a lockfile accompanies package.json, from any of npm, Yarn, pnpm, or Bun
 if test -f package.json; then
-  if ! test -f yarn.lock && ! test -f package-lock.json; then
-    echo 'No yarn.lock or package-lock.json file present'
+  lockfiles=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb)
+  found=
+  for f in "${lockfiles[@]}"; do
+    if test -f "$f"; then found=$f; break; fi
+  done
+  if [ -z "$found" ]; then
+    echo "package.json has no lockfile; expected one of: ${lockfiles[*]}"
     RESULT+=1
   fi
 fi
 
-# lint shell files
+# True if the file starts with a shebang for a shell ShellCheck understands
+# (sh, bash, dash, ksh), directly or through env: `#!/usr/bin/env -S bash -e`.
+is_shell_script() {
+  local line interp w
+  local -a words
+  IFS= read -r -n 256 line 2>/dev/null < "$1"
+  [[ $line == '#!'* ]] || return 1
+  line="${line%$'\r'}"
+  read -ra words <<< "${line#'#!'}"
+  [ ${#words[@]} -gt 0 ] || return 1
+  interp="${words[0]##*/}"
+  if [ "$interp" = env ]; then
+    interp=
+    for w in "${words[@]:1}"; do
+      case "$w" in
+        -*|*=*) ;;
+        *) interp="${w##*/}"; break ;;
+      esac
+    done
+  fi
+  case "$interp" in
+    sh|bash|dash|ksh) return 0 ;;
+  esac
+  return 1
+}
+
+# lint shell files: *.sh and *.bash, plus extensionless scripts with a shell
+# shebang (git hooks, bin/ commands). Skips gradlew and mvnw, which the Gradle
+# and Maven wrappers generate.
 mapfile -t files < <(list_files '*.sh' '*.bash')
+while IFS= read -r f; do
+  case "${f##*/}" in
+    *.*|gradlew|mvnw) ;;
+    *) is_shell_script "$f" && files+=("$f") ;;
+  esac
+done < <(list_files .)
 [ ${#files[@]} -eq 0 ] || shellcheck -- "${files[@]}"
 RESULT+=$?
 
@@ -155,11 +256,19 @@ fi
 [ ${#files[@]} -eq 0 ] || XDG_CONFIG_HOME=/etc/lintorama ruff check --no-cache --force-exclude -- "${files[@]}"
 RESULT+=$?
 
-# lint Dockerfile
-if test -f Dockerfile; then
-  hadolint Dockerfile
-  RESULT+=$?
-fi
+# lint Dockerfiles and Containerfiles at any depth, including named variants such
+# as Dockerfile.dist and alpine.Dockerfile, but not BuildKit's per-Dockerfile
+# ignore files (Dockerfile.dockerignore) or templates rendered into a Dockerfile.
+files=()
+while IFS= read -r f; do
+  case "${f##*/}" in
+    *.dockerignore|*.in|*.j2|*.jinja|*.jinja2|*.tmpl|*.tpl|*.template|*.erb|*.mustache) ;;
+    *) files+=("$f") ;;
+  esac
+done < <(list_files ':(glob)**/Dockerfile' ':(glob)**/Dockerfile.*' ':(glob)**/*.Dockerfile' \
+  ':(glob)**/*.dockerfile' ':(glob)**/Containerfile' ':(glob)**/Containerfile.*')
+[ ${#files[@]} -eq 0 ] || hadolint -- "${files[@]}"
+RESULT+=$?
 
 # lint markdown
 if ! test -f README.md; then
@@ -171,9 +280,11 @@ mapfile -t files < <(list_files '*.md' '*.markdown' ':!:.agents/skills/*')
 [ ${#files[@]} -eq 0 ] || mdl "${files[@]}"
 RESULT+=$?
 
-# verify tracked files conform to .editorconfig, if the repo defines one
+# verify tracked files conform to .editorconfig, if the repo defines one. It finds
+# files itself, so skip dependency directories with -exclude, which adds to (not
+# replaces) any Exclude list in the repo's .editorconfig-checker.json.
 if test -f .editorconfig; then
-  editorconfig-checker
+  editorconfig-checker -exclude "$dependency_re"
   RESULT+=$?
 fi
 

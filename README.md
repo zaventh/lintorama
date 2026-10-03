@@ -25,12 +25,13 @@ and validators — [yamllint](https://github.com/adrienverge/yamllint),
 [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema), and
 [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker)
 — behind one entrypoint, `lint-extras`. Point it at a Git repository and it runs
-the right check over every tracked YAML, shell, Lua, `Dockerfile`, Markdown, and
+the right check over every tracked YAML, shell, Lua, Dockerfile, Markdown, and
 GitHub Actions workflow file, lints the Python in supporting-script directories
 (`scripts/`, `build/`, `.claude/hooks/`), schema-validates common config files
-(`.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs), and — when an
-`.editorconfig` is present — verifies every tracked file against it, then exits
-non-zero if any check fails. It is built for CI pipelines: no per-project linter
+(CI pipelines, Docker Compose, GitHub issue forms and actions, Dependabot,
+Renovate, and more), and — when an `.editorconfig` is present — verifies every
+tracked file against it, then exits non-zero if any check fails. Dependency
+directories such as `node_modules/` and `vendor/` are never linted. It is built for CI pipelines: no per-project linter
 installs, no juggling tool versions, no bespoke setup — just `docker run`.
 
 In short: **one container image for polyglot static analysis and code-quality
@@ -52,7 +53,7 @@ checks in continuous integration.**
 
 ## Highlights
 
-- **Nine checks, one image.** YAML, shell, `Dockerfile`, Markdown, Lua, Python
+- **Nine checks, one image.** YAML, shell, Dockerfiles, Markdown, Lua, Python
   scripts, GitHub Actions workflows, schema-backed config files, and
   `.editorconfig` conformance are all covered by a single pull.
 - **Zero setup to start.** Sensible defaults work out of the box; every linter
@@ -70,13 +71,13 @@ checks in continuous integration.**
 | Tool | Version | Checks |
 | --- | --- | --- |
 | [yamllint](https://github.com/adrienverge/yamllint) | 1.38.0 | YAML (`*.yml`, `*.yaml`) |
-| [ShellCheck](https://www.shellcheck.net/) | 0.11.0 | Shell scripts (`*.sh`, `*.bash`) |
-| [hadolint](https://github.com/hadolint/hadolint) | 2.15.1 | `Dockerfile` |
+| [ShellCheck](https://www.shellcheck.net/) | 0.11.0 | Shell scripts (`*.sh`, `*.bash`, and extensionless scripts with a shell shebang) |
+| [hadolint](https://github.com/hadolint/hadolint) | 2.15.1 | `Dockerfile`, `Containerfile`, and variants such as `Dockerfile.dev` or `app.Dockerfile`, at any depth |
 | [markdownlint (mdl)](https://github.com/markdownlint/markdownlint) | 0.18.1 | Markdown (`*.md`, `*.markdown`) |
 | [luacheck](https://github.com/lunarmodules/luacheck) | 1.2.0 | Lua (`*.lua`) |
 | [Ruff](https://docs.astral.sh/ruff/) | 0.16.10 | Python in `scripts/`, `build/`, `.claude/hooks/` (`*.py` and Python-shebang scripts) |
 | [actionlint](https://github.com/rhysd/actionlint) | 1.7.12 | GitHub Actions workflows (`.github/workflows/*.yml`) |
-| [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.38.0 | Schema validation: `.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs |
+| [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.38.0 | Schema validation: CI pipelines, Docker Compose, GitHub issue forms and actions, Dependabot, Renovate, and [more](#schema-validated-files) |
 | [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 4.0.1 | `.editorconfig` conformance (all tracked files) |
 
 Built on `python:3-alpine3.24`.
@@ -91,7 +92,7 @@ gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
   -v "$gitdir":"$gitdir" \
-  zaventh/lintorama:8
+  zaventh/lintorama:9
 ```
 
 The image works out of `/code` (its `WORKDIR`), which is already registered as a
@@ -122,7 +123,7 @@ docker run --rm \
   -e GIT_CONFIG_COUNT=1 \
   -e GIT_CONFIG_KEY_0=safe.directory \
   -e GIT_CONFIG_VALUE_0="$PWD" \
-  zaventh/lintorama:8
+  zaventh/lintorama:9
 ```
 
 ## Continuous integration
@@ -135,7 +136,7 @@ repository and fail the job on any lint error.
 
 ```yaml
 lint:
-  image: zaventh/lintorama:8
+  image: zaventh/lintorama:9
   script:
     - lint-extras
 ```
@@ -154,7 +155,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/code \
             -v "$gitdir":"$gitdir" \
-            zaventh/lintorama:8
+            zaventh/lintorama:9
 ```
 
 ### Any other CI (generic Docker)
@@ -164,7 +165,7 @@ gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
   -v "$gitdir":"$gitdir" \
-  zaventh/lintorama:8
+  zaventh/lintorama:9
 ```
 
 ## What it checks
@@ -173,20 +174,65 @@ The `lint-extras` entrypoint operates on the **Git-tracked** files in the
 working directory (it uses `git ls-files`), so the target must be a Git
 repository. In order, it:
 
-1. Runs `yamllint -s` (strict) over all tracked `*.yml` / `*.yaml` files.
-1. Schema-validates well-known config files against their published schemas with `check-jsonschema`, when present: `.gitlab-ci.yml`, `.github/dependabot.yml`, Renovate config (`renovate.json`, `.renovaterc`, …), and `.readthedocs.yaml`.
+1. Runs `yamllint -s` (strict) over all tracked `*.yml` / `*.yaml` files, except generated lockfiles (`pnpm-lock.yaml`, `conda-lock.yml`).
+1. Schema-validates well-known config files against their published schemas with `check-jsonschema`, when present. See [Schema-validated files](#schema-validated-files).
 1. Runs `actionlint` over all tracked `.github/workflows/*.yml` / `*.yaml` files (delegating embedded `run:` scripts to the bundled ShellCheck).
-1. If a `package.json` exists, requires a `yarn.lock` or `package-lock.json` to accompany it.
-1. Runs `shellcheck` over all tracked `*.sh` / `*.bash` files.
+1. If a `package.json` exists, requires a lockfile to accompany it: `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, or `bun.lockb`.
+1. Runs `shellcheck` over all tracked `*.sh` / `*.bash` files, plus extensionless files whose shebang names `sh`, `bash`, `dash`, or `ksh` (directly or through `env`), such as Git hooks. The generated `gradlew` and `mvnw` wrappers are skipped.
 1. Runs `luacheck` over all tracked `*.lua` files.
 1. Runs `ruff check` over the Python in directories named `scripts`, `build`, or `.claude/hooks` at any depth: `*.py` files plus extensionless files with a `python` (or `uv run`) shebang. Change the directories with [`--python-dirs`](#options).
-1. Runs `hadolint` against `Dockerfile`, if present.
+1. Runs `hadolint` over every `Dockerfile` and `Containerfile` at any depth, including variants such as `Dockerfile.dev` and `app.Dockerfile`. Per-Dockerfile ignore files (`Dockerfile.dockerignore`) and templates (`Dockerfile.j2`, `Dockerfile.in`, `Dockerfile.tmpl`, …) are skipped.
 1. Requires a `README.md` (case-sensitive) to exist.
 1. Runs `mdl` over all tracked `*.md` / `*.markdown` files.
 1. If an `.editorconfig` exists, runs `editorconfig-checker` to verify every tracked file conforms to it.
 
 The exit code is the sum of the individual linter results — any failure fails
 the run.
+
+### Dependency directories
+
+Files under package-manager install directories are never linted, at any depth,
+even when they are committed or missing from `.gitignore`: `node_modules`,
+`bower_components`, `jspm_packages`, `.yarn`, `.pnpm-store`, `vendor`, `.venv`,
+`venv`, `site-packages`, `__pypackages__`, `.tox`, `.nox`, `Pods`, `Carthage`,
+`.build`, `.gradle`, `.dart_tool`, `elm-stuff`, and `.terraform`. Git submodules
+are skipped too, since `git ls-files` doesn't descend into them.
+
+### Schema-validated files
+
+`check-jsonschema` validates each of these files against the schema bundled with
+it, so validation runs offline. File names follow `check-jsonschema`'s own
+pre-commit hooks.
+
+| Schema | Files |
+| --- | --- |
+| GitLab CI | `.gitlab-ci.yml` |
+| GitHub Actions (composite and other actions) | `action.yml` at the root, `.github/actions/**/action.yml` |
+| GitHub issue forms | `.github/ISSUE_TEMPLATE/*.yml`, except `config.yml` |
+| GitHub issue template chooser | `.github/ISSUE_TEMPLATE/config.yml` |
+| GitHub discussion forms | `.github/DISCUSSION_TEMPLATE/*.yml` |
+| Dependabot | `.github/dependabot.yml` |
+| Renovate | `renovate.json`, `renovate.json5`, `.renovaterc`, `.renovaterc.json`, `.renovaterc.json5`, and `renovate.json` / `renovate.json5` under `.github/` or `.gitlab/` |
+| Docker Compose | `compose.yaml`, `docker-compose.yml`, and variants such as `compose.prod.yaml`, at any depth. Files that use Compose's `!reset` or `!override` merge tags are skipped, since `check-jsonschema` can't load them. |
+| Azure Pipelines | `azure-pipelines.yml`, `.azure-pipelines.yml` |
+| Bamboo Specs | `bamboo-specs/**/*.yml` |
+| Bitbucket Pipelines | `bitbucket-pipelines.yml`, at any depth |
+| Buildkite | `buildkite.yml`, `buildkite.*.yml`, `.buildkite/pipeline.yml`, `.buildkite/pipeline.*.yml` (also `.json`) |
+| CircleCI | `.circleci/config.yml` |
+| Google Cloud Build | `cloudbuild.yaml` (also `.yml`, `.json`) |
+| Travis CI | `.travis.yml` |
+| Woodpecker CI | `.woodpecker.yml`, `.woodpecker/**/*.yml` |
+| Changie | `.changie.yaml` |
+| Citation File Format | `CITATION.cff` |
+| Codecov | `codecov.yml` or `.codecov.yml` at the root, in `.github/`, or in `dev/` |
+| Meltano | `meltano.yml` at any depth, `meltano-manifest.json`, `meltano-manifest.*.json` |
+| Mergify | `.mergify.yml`, `.mergify/config.yml`, `.github/mergify.yml` |
+| Read the Docs | `.readthedocs.yaml` |
+| Snapcraft | `snapcraft.yaml`, at any depth |
+| Taskfile | `Taskfile.yml`, `taskfile.yml`, `Taskfile.dist.yml`, `taskfile.dist.yml` |
+
+Each `.yml` or `.yaml` name in the table matches both spellings, except Meltano
+and Mergify (`.yml` only) and Snapcraft (`.yaml` only).
 
 ## Options
 
@@ -205,7 +251,7 @@ In GitLab CI, pass options to `lint-extras` in the job's `script`:
 
 ```yaml
 lint:
-  image: zaventh/lintorama:8
+  image: zaventh/lintorama:9
   script:
     - lint-extras --python-dirs scripts,tools
 ```
@@ -217,7 +263,7 @@ gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
   -v "$gitdir":"$gitdir" \
-  zaventh/lintorama:8 --python-dirs scripts,tools
+  zaventh/lintorama:9 --python-dirs scripts,tools
 ```
 
 ## Configuration
@@ -254,7 +300,7 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `8.0.0` | Exact, immutable version |
+| `9.0.0` | Exact, immutable version |
 | `8` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
@@ -270,7 +316,7 @@ editorconfig-checker behind a single command, `lint-extras`, for linting a Git
 repository in CI pipelines.
 
 **Which linters does lintorama include?**
-Nine: yamllint (YAML), ShellCheck (shell scripts), hadolint (`Dockerfile`),
+Nine: yamllint (YAML), ShellCheck (shell scripts), hadolint (Dockerfiles),
 markdownlint / mdl (Markdown), luacheck (Lua), Ruff (Python scripts),
 actionlint (GitHub Actions workflows), check-jsonschema (schema validation for
 CI and tooling config), and editorconfig-checker (`.editorconfig` conformance).
