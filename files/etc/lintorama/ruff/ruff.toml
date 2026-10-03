@@ -1,0 +1,19 @@
+# lintorama's default Ruff configuration for supporting Python (scripts/, build/, .claude/hooks/, ...).
+# Ruff uses it only when the project has no Ruff config of its own; a project's ruff.toml, .ruff.toml,
+# or pyproject.toml [tool.ruff] replaces this file entirely (Ruff doesn't merge configs).
+#
+# Starts from Ruff's own curated default rule set, tuned lightly for human reading. Line length (E501),
+# complexity (C901, PLR09xx), naming (N), and docstrings (D) stay off: too noisy for scripts, or the
+# formatter's job.
+
+# Wrap import blocks (isort) at 100 rather than 88.
+line-length = 100
+
+[lint]
+extend-select = [
+  "PLR1714",  # repeated equality comparison: `x == a or x == b` -> `x in {a, b}`
+  "PLR5501",  # collapsible else-if: `else: if` -> `elif`
+]
+ignore = [
+  "DTZ",  # naive local datetimes are the norm in scripts
+]

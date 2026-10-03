@@ -10,22 +10,24 @@
 [![Source](https://img.shields.io/badge/source-GitHub-181717.svg?logo=github)](https://github.com/zaventh/lintorama)
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-zaventh%2Flintorama-2496ED.svg?logo=docker&logoColor=white)](https://hub.docker.com/r/zaventh/lintorama)
 ![Base image](https://img.shields.io/badge/base-python%3A3--alpine3.24-blue.svg)
-![Linters](https://img.shields.io/badge/linters-8-brightgreen.svg)
+![Linters](https://img.shields.io/badge/linters-9-brightgreen.svg)
 
 # lintorama
 
-**lintorama** is a single Docker image that bundles eight widely-used linters
+**lintorama** is a single Docker image that bundles nine widely-used linters
 and validators — [yamllint](https://github.com/adrienverge/yamllint),
 [ShellCheck](https://www.shellcheck.net/),
 [hadolint](https://github.com/hadolint/hadolint),
 [markdownlint (mdl)](https://github.com/markdownlint/markdownlint),
 [luacheck](https://github.com/lunarmodules/luacheck),
+[Ruff](https://docs.astral.sh/ruff/),
 [actionlint](https://github.com/rhysd/actionlint),
 [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema), and
 [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker)
 — behind one entrypoint, `lint-extras`. Point it at a Git repository and it runs
 the right check over every tracked YAML, shell, Lua, `Dockerfile`, Markdown, and
-GitHub Actions workflow file, schema-validates common config files
+GitHub Actions workflow file, lints the Python in supporting-script directories
+(`scripts/`, `build/`, `.claude/hooks/`), schema-validates common config files
 (`.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs), and — when an
 `.editorconfig` is present — verifies every tracked file against it, then exits
 non-zero if any check fails. It is built for CI pipelines: no per-project linter
@@ -41,6 +43,7 @@ checks in continuous integration.**
 - [Quick start](#quick-start)
 - [Continuous integration](#continuous-integration)
 - [What it checks](#what-it-checks)
+- [Options](#options)
 - [Configuration](#configuration)
 - [Image tags](#image-tags)
 - [FAQ](#faq)
@@ -49,9 +52,9 @@ checks in continuous integration.**
 
 ## Highlights
 
-- **Eight checks, one image.** YAML, shell, `Dockerfile`, Markdown, Lua, GitHub
-  Actions workflows, schema-backed config files, and `.editorconfig` conformance
-  are all covered by a single pull.
+- **Nine checks, one image.** YAML, shell, `Dockerfile`, Markdown, Lua, Python
+  scripts, GitHub Actions workflows, schema-backed config files, and
+  `.editorconfig` conformance are all covered by a single pull.
 - **Zero setup to start.** Sensible defaults work out of the box; every linter
   still honors its own config file when you want to tune it.
 - **CI-native.** A single `lint-extras` command lints an entire repository and
@@ -71,6 +74,7 @@ checks in continuous integration.**
 | [hadolint](https://github.com/hadolint/hadolint) | 2.15.1 | `Dockerfile` |
 | [markdownlint (mdl)](https://github.com/markdownlint/markdownlint) | 0.18.1 | Markdown (`*.md`, `*.markdown`) |
 | [luacheck](https://github.com/lunarmodules/luacheck) | 1.2.0 | Lua (`*.lua`) |
+| [Ruff](https://docs.astral.sh/ruff/) | 0.16.10 | Python in `scripts/`, `build/`, `.claude/hooks/` (`*.py` and Python-shebang scripts) |
 | [actionlint](https://github.com/rhysd/actionlint) | 1.7.12 | GitHub Actions workflows (`.github/workflows/*.yml`) |
 | [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.38.0 | Schema validation: `.gitlab-ci.yml`, Dependabot, Renovate, Read the Docs |
 | [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 4.0.1 | `.editorconfig` conformance (all tracked files) |
@@ -87,7 +91,7 @@ gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
   -v "$gitdir":"$gitdir" \
-  zaventh/lintorama:7
+  zaventh/lintorama:8
 ```
 
 The image works out of `/code` (its `WORKDIR`), which is already registered as a
@@ -118,7 +122,7 @@ docker run --rm \
   -e GIT_CONFIG_COUNT=1 \
   -e GIT_CONFIG_KEY_0=safe.directory \
   -e GIT_CONFIG_VALUE_0="$PWD" \
-  zaventh/lintorama:7
+  zaventh/lintorama:8
 ```
 
 ## Continuous integration
@@ -131,7 +135,7 @@ repository and fail the job on any lint error.
 
 ```yaml
 lint:
-  image: zaventh/lintorama:7
+  image: zaventh/lintorama:8
   script:
     - lint-extras
 ```
@@ -150,7 +154,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/code \
             -v "$gitdir":"$gitdir" \
-            zaventh/lintorama:7
+            zaventh/lintorama:8
 ```
 
 ### Any other CI (generic Docker)
@@ -160,7 +164,7 @@ gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm \
   -v "$PWD":/code \
   -v "$gitdir":"$gitdir" \
-  zaventh/lintorama:7
+  zaventh/lintorama:8
 ```
 
 ## What it checks
@@ -175,6 +179,7 @@ repository. In order, it:
 1. If a `package.json` exists, requires a `yarn.lock` or `package-lock.json` to accompany it.
 1. Runs `shellcheck` over all tracked `*.sh` / `*.bash` files.
 1. Runs `luacheck` over all tracked `*.lua` files.
+1. Runs `ruff check` over the Python in directories named `scripts`, `build`, or `.claude/hooks` at any depth: `*.py` files plus extensionless files with a `python` (or `uv run`) shebang. Change the directories with [`--python-dirs`](#options).
 1. Runs `hadolint` against `Dockerfile`, if present.
 1. Requires a `README.md` (case-sensitive) to exist.
 1. Runs `mdl` over all tracked `*.md` / `*.markdown` files.
@@ -182,6 +187,38 @@ repository. In order, it:
 
 The exit code is the sum of the individual linter results — any failure fails
 the run.
+
+## Options
+
+`lint-extras` takes these command-line options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--python-dirs DIRS` | `scripts,build,.claude/hooks` | Comma-separated directory names or repository-relative paths whose Python Ruff lints, matched at any depth. Pass `''` to skip Python. |
+| `-h`, `--help` | | Print usage and exit. |
+
+Python is limited to these directories on purpose: lintorama covers a project's
+supporting files, and its main Python code is better served by the project's own
+tooling. To lint scripts kept somewhere else, list those directories instead.
+
+In GitLab CI, pass options to `lint-extras` in the job's `script`:
+
+```yaml
+lint:
+  image: zaventh/lintorama:8
+  script:
+    - lint-extras --python-dirs scripts,tools
+```
+
+With `docker run`, put them after the image name:
+
+```sh
+gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
+docker run --rm \
+  -v "$PWD":/code \
+  -v "$gitdir":"$gitdir" \
+  zaventh/lintorama:8 --python-dirs scripts,tools
+```
 
 ## Configuration
 
@@ -193,6 +230,7 @@ repository root, so consumers can tune the rules without changing this image:
 | `.yamllint` | yamllint |
 | `.hadolint.yaml` | hadolint |
 | `.mdlrc` | markdownlint |
+| `ruff.toml`, `.ruff.toml`, or `pyproject.toml` with `[tool.ruff]` | Ruff |
 | `.github/actionlint.yaml` | actionlint |
 | `.editorconfig` | editorconfig-checker (also the file it enforces) |
 
@@ -201,6 +239,14 @@ repository are the ones `lintorama` applies to itself. `check-jsonschema` needs
 no configuration — it picks each file's schema by name — and
 `editorconfig-checker` only runs when the repository provides an `.editorconfig`.
 
+When the repository has no Ruff configuration, Ruff uses lintorama's bundled
+[defaults](files/etc/lintorama/ruff/ruff.toml): Ruff's own default rule set,
+tuned lightly for readability. Line length, complexity, naming, and docstring
+rules stay off, and formatting isn't enforced. A Ruff config in the repository
+replaces those defaults entirely, since Ruff doesn't merge configs, so copy the
+bundled file as a starting point. Ruff's `exclude` and `extend-exclude` settings
+are honored for the files lintorama passes it.
+
 ## Image tags
 
 Published to Docker Hub as
@@ -208,8 +254,8 @@ Published to Docker Hub as
 
 | Tag | Meaning |
 | --- | --- |
-| `7.1.1` | Exact, immutable version |
-| `7` | Rolling major tag (recommended for most pipelines) |
+| `8.0.0` | Exact, immutable version |
+| `8` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
 Each tag is a multi-arch image for `linux/amd64` and `linux/arm64`; Docker picks
@@ -219,16 +265,16 @@ the right one for the host automatically.
 
 **What is lintorama?**
 lintorama is a Docker image that bundles yamllint, ShellCheck, hadolint,
-markdownlint (mdl), luacheck, actionlint, check-jsonschema, and
+markdownlint (mdl), luacheck, Ruff, actionlint, check-jsonschema, and
 editorconfig-checker behind a single command, `lint-extras`, for linting a Git
 repository in CI pipelines.
 
 **Which linters does lintorama include?**
-Eight: yamllint (YAML), ShellCheck (shell scripts), hadolint (`Dockerfile`),
-markdownlint / mdl (Markdown), luacheck (Lua), actionlint (GitHub Actions
-workflows), check-jsonschema (schema validation for CI and tooling config), and
-editorconfig-checker (`.editorconfig` conformance). See
-[Bundled linters](#bundled-linters) for exact versions.
+Nine: yamllint (YAML), ShellCheck (shell scripts), hadolint (`Dockerfile`),
+markdownlint / mdl (Markdown), luacheck (Lua), Ruff (Python scripts),
+actionlint (GitHub Actions workflows), check-jsonschema (schema validation for
+CI and tooling config), and editorconfig-checker (`.editorconfig` conformance).
+See [Bundled linters](#bundled-linters) for exact versions.
 
 **How do I run lintorama locally?**
 Run the [Quick start](#quick-start) command from the root of any Git repository
@@ -242,8 +288,14 @@ Actions or any other system, run the image with `docker run`. See
 
 **Does lintorama require configuration?**
 No. It works with sensible defaults, but each linter honors its standard config
-file (`.yamllint`, `.hadolint.yaml`, `.mdlrc`) when present. See
+file (`.yamllint`, `.hadolint.yaml`, `.mdlrc`, `ruff.toml`) when present. See
 [Configuration](#configuration).
+
+**Why does lintorama only lint Python in `scripts/` and `build/`?**
+lintorama checks a project's supporting files, not its main code. Python in
+`scripts/`, `build/`, and `.claude/hooks/` is usually helper tooling with no
+linter of its own, while a Python codebase has its own lint setup. Use
+[`--python-dirs`](#options) to choose different directories.
 
 **Why does lintorama need the `.git` directory?**
 `lint-extras` discovers files with `git ls-files`, so the target must be a Git

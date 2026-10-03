@@ -29,7 +29,7 @@ RUN \
     apk add --no-cache bash build-base ruby ruby-dev git \
     lua5.3-dev luarocks5.3 \
     && gem install --no-document etc mdl:0.18.1 \
-    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.38.0 \
+    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.38.0 ruff==0.16.10 \
     && luarocks-5.3 install luacheck 1.2.0-1 \
     && git config --global --add safe.directory /code \
     # smoke tests
@@ -40,7 +40,10 @@ RUN \
     && luacheck -v \
     && check-jsonschema --version \
     && actionlint -version \
-    && editorconfig-checker -version
+    && editorconfig-checker -version \
+    && ruff --version \
+    # parse the bundled Ruff defaults (no project config at /, so Ruff falls back to them)
+    && XDG_CONFIG_HOME=/etc/lintorama ruff check --no-cache - </dev/null
 
 ENV LUA_PATH='/usr/local/share/lua/5.3/?.lua;/usr/local/share/lua/5.3/?/init.lua;/usr/share/lua/5.3/?.lua;/usr/share/lua/5.3/?/init.lua;./?.lua;./?/init.lua'
 ENV LUA_CPATH='/usr/local/lib/lua/5.3/?.so;/usr/lib/lua/5.3/?.so;./?.so'

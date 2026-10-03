@@ -1,7 +1,40 @@
 #!/usr/bin/env bash
 # lint-extras
-# Version 3.4.2
+# Version 3.5.0
 declare -i RESULT=0
+
+usage() {
+  cat <<'EOF'
+Usage: lint-extras [--python-dirs DIRS]
+
+Lints the supporting files of the Git repository in the current directory.
+
+Options:
+  --python-dirs DIRS  Comma-separated directory names or repo-relative paths whose
+                      Python is linted with Ruff, at any depth. Pass '' to skip.
+                      Default: scripts,build,.claude/hooks
+  -h, --help          Show this help and exit.
+EOF
+}
+
+PYTHON_DIRS='scripts,build,.claude/hooks'
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --python-dirs)
+      if [ $# -lt 2 ]; then
+        echo 'lint-extras: --python-dirs needs a value' >&2
+        usage >&2
+        exit 2
+      fi
+      PYTHON_DIRS="$2"; shift 2 ;;
+    --python-dirs=*) PYTHON_DIRS="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      echo "lint-extras: unknown argument: $1" >&2
+      usage >&2
+      exit 2 ;;
+  esac
+done
 
 # Every file-based check enumerates via git; bail clearly if not in a work tree.
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -17,7 +50,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
           # shellcheck disable=SC2016 # printed for the user to run on the host
           echo '  gitdir=$(git rev-parse --path-format=absolute --git-common-dir)'
           # shellcheck disable=SC2016
-          echo '  docker run --rm -v "$PWD":/code -v "$gitdir":"$gitdir" zaventh/lintorama:7'
+          echo '  docker run --rm -v "$PWD":/code -v "$gitdir":"$gitdir" zaventh/lintorama:8'
         else
           echo 'This looks like a worktree with a relative link (--relative-paths); mount it at'
           echo 'its host path rather than /code, along with the repository'\''s Git dir.'
@@ -90,6 +123,36 @@ RESULT+=$?
 # lint lua files
 mapfile -t files < <(list_files '*.lua')
 [ ${#files[@]} -eq 0 ] || luacheck -q -- "${files[@]}"
+RESULT+=$?
+
+# lint Python in supporting-script directories (scripts/, build/, ... at any depth),
+# leaving the project's main Python code to its own tooling. Picks up *.py plus
+# extensionless files with a python (or `uv run`) shebang.
+python_specs=()
+IFS=, read -ra python_dirs <<< "$PYTHON_DIRS"
+for d in "${python_dirs[@]}"; do
+  d="${d#"${d%%[![:space:]]*}"}"; d="${d%"${d##*[![:space:]]}"}"  # trim whitespace
+  d="${d#./}"; d="${d#/}"; d="${d%/}"
+  [ -z "$d" ] || python_specs+=(":(glob)**/$d/**")
+done
+files=()
+if [ ${#python_specs[@]} -gt 0 ]; then
+  while IFS= read -r f; do
+    case "${f##*/}" in
+      *.py) files+=("$f") ;;
+      *.*) ;;
+      *)
+        line=
+        [ -f "$f" ] && IFS= read -r line 2>/dev/null < "$f"
+        [[ $line =~ ^#!.*(python|uv\ run) ]] && files+=("$f") ;;
+    esac
+  done < <(list_files "${python_specs[@]}" ':!:.agents/skills/*')
+fi
+# Ruff falls back to the user-level ${XDG_CONFIG_HOME}/ruff/ruff.toml only when the
+# project has no ruff.toml, .ruff.toml, or pyproject.toml with [tool.ruff], so point
+# that at lintorama's defaults. --no-cache keeps a root-owned .ruff_cache out of the
+# mounted repo; --force-exclude honors the project's own exclude settings.
+[ ${#files[@]} -eq 0 ] || XDG_CONFIG_HOME=/etc/lintorama ruff check --no-cache --force-exclude -- "${files[@]}"
 RESULT+=$?
 
 # lint Dockerfile
