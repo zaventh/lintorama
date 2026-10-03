@@ -164,6 +164,35 @@ schema_check vendor.taskfile -- \
   'Taskfile.yml' 'Taskfile.yaml' 'taskfile.yml' 'taskfile.yaml' \
   'Taskfile.dist.yml' 'Taskfile.dist.yaml' 'taskfile.dist.yml' 'taskfile.dist.yaml'
 
+# syntax-check JSON, except generated lockfiles. JSON is held to RFC 8259 (no
+# comments, trailing commas, or duplicate keys) unless it's JSONC: *.jsonc, plus
+# the config files whose tools accept comments and trailing commas.
+check_syntax=/usr/local/lib/lintorama/check_syntax.py
+json_files=()
+jsonc_files=()
+while IFS= read -r f; do
+  case "/$f" in
+    *.jsonc|*.code-workspace|*.code-snippets|*/.vscode/*.json|*/devcontainer.json|*/.devcontainer.json|\
+    */tsconfig*.json|*/jsconfig*.json|*/deno.json|*/biome.json|*/turbo.json|*/wrangler.json|*/typedoc.json|\
+    */.eslintrc.json|*/.oxlintrc.json|*/.babelrc.json|*/babel.config.json|*/.markdownlint.json|\
+    */cspell.json|*/.cspell.json|*/appsettings*.json)
+      jsonc_files+=("$f") ;;
+    *) json_files+=("$f") ;;
+  esac
+done < <(list_files '*.json' '*.jsonc' '*.code-workspace' '*.code-snippets' ':!:.agents/skills/*' \
+  ':(exclude,glob)**/package-lock.json' ':(exclude,glob)**/npm-shrinkwrap.json')
+[ ${#json_files[@]} -eq 0 ] || python3 "$check_syntax" json "${json_files[@]}"
+RESULT+=$?
+[ ${#jsonc_files[@]} -eq 0 ] || python3 "$check_syntax" jsonc "${jsonc_files[@]}"
+RESULT+=$?
+
+# syntax-check TOML, including Pipenv's Pipfile. tomli is pinned to its v1.0 line:
+# Python's tomllib (pyproject.toml) and Gradle (libs.versions.toml) can't read
+# v1.1 additions such as trailing commas in inline tables.
+mapfile -t files < <(list_files '*.toml' ':(glob)**/Pipfile' ':!:.agents/skills/*')
+[ ${#files[@]} -eq 0 ] || python3 "$check_syntax" toml "${files[@]}"
+RESULT+=$?
+
 # lint GitHub Actions workflows (run: steps are delegated to the bundled shellcheck)
 mapfile -t files < <(list_files '.github/workflows/*.yml' '.github/workflows/*.yaml')
 [ ${#files[@]} -eq 0 ] || actionlint "${files[@]}"

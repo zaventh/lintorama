@@ -29,7 +29,7 @@ RUN \
     apk add --no-cache bash build-base ruby ruby-dev git \
     lua5.3-dev luarocks5.3 \
     && gem install --no-document etc mdl:0.18.1 \
-    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.38.0 ruff==0.16.10 \
+    && pip install --no-cache-dir yamllint==1.38.0 check-jsonschema==0.38.0 ruff==0.16.10 tomli==2.3.1 \
     && luarocks-5.3 install luacheck 1.2.0-1 \
     && git config --global --add safe.directory /code \
     # smoke tests
@@ -42,6 +42,7 @@ RUN \
     && actionlint -version \
     && editorconfig-checker -version \
     && ruff --version \
+    && python3 /usr/local/lib/lintorama/check_syntax.py toml /etc/lintorama/ruff/ruff.toml \
     # parse the bundled Ruff defaults (no project config at /, so Ruff falls back to them)
     && XDG_CONFIG_HOME=/etc/lintorama ruff check --no-cache - </dev/null
 

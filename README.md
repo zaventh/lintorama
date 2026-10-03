@@ -26,12 +26,13 @@ and validators — [yamllint](https://github.com/adrienverge/yamllint),
 [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker)
 — behind one entrypoint, `lint-extras`. Point it at a Git repository and it runs
 the right check over every tracked YAML, shell, Lua, Dockerfile, Markdown, and
-GitHub Actions workflow file, lints the Python in supporting-script directories
-(`scripts/`, `build/`, `.claude/hooks/`), schema-validates common config files
-(CI pipelines, Docker Compose, GitHub issue forms and actions, Dependabot,
-Renovate, and more), and — when an `.editorconfig` is present — verifies every
-tracked file against it, then exits non-zero if any check fails. Dependency
-directories such as `node_modules/` and `vendor/` are never linted. It is built for CI pipelines: no per-project linter
+GitHub Actions workflow file, syntax-checks JSON, JSONC, and TOML, lints the
+Python in supporting-script directories (`scripts/`, `build/`, `.claude/hooks/`),
+schema-validates common config files (CI pipelines, Docker Compose, GitHub issue
+forms and actions, Dependabot, Renovate, and more), and — when an
+`.editorconfig` is present — verifies every tracked file against it, then exits
+non-zero if any check fails. Dependency directories such as `node_modules/` and
+`vendor/` are never linted. It is built for CI pipelines: no per-project linter
 installs, no juggling tool versions, no bespoke setup — just `docker run`.
 
 In short: **one container image for polyglot static analysis and code-quality
@@ -53,8 +54,8 @@ checks in continuous integration.**
 
 ## Highlights
 
-- **Nine checks, one image.** YAML, shell, Dockerfiles, Markdown, Lua, Python
-  scripts, GitHub Actions workflows, schema-backed config files, and
+- **Nine linters, one image.** YAML, JSON, TOML, shell, Dockerfiles, Markdown,
+  Lua, Python scripts, GitHub Actions workflows, schema-backed config files, and
   `.editorconfig` conformance are all covered by a single pull.
 - **Zero setup to start.** Sensible defaults work out of the box; every linter
   still honors its own config file when you want to tune it.
@@ -79,6 +80,7 @@ checks in continuous integration.**
 | [actionlint](https://github.com/rhysd/actionlint) | 1.7.12 | GitHub Actions workflows (`.github/workflows/*.yml`) |
 | [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema) | 0.38.0 | Schema validation: CI pipelines, Docker Compose, GitHub issue forms and actions, Dependabot, Renovate, and [more](#schema-validated-files) |
 | [editorconfig-checker](https://github.com/editorconfig-checker/editorconfig-checker) | 4.0.1 | `.editorconfig` conformance (all tracked files) |
+| Built-in syntax check, using [tomli](https://github.com/hukkin/tomli) for TOML | 2.3.1 | [JSON, JSONC, and TOML](#json-and-toml) (`*.json`, `*.jsonc`, `*.toml`, `Pipfile`) |
 
 Built on `python:3-alpine3.24`.
 
@@ -176,6 +178,7 @@ repository. In order, it:
 
 1. Runs `yamllint -s` (strict) over all tracked `*.yml` / `*.yaml` files, except generated lockfiles (`pnpm-lock.yaml`, `conda-lock.yml`).
 1. Schema-validates well-known config files against their published schemas with `check-jsonschema`, when present. See [Schema-validated files](#schema-validated-files).
+1. Syntax-checks all tracked JSON, JSONC, and TOML files, except generated lockfiles (`package-lock.json`, `npm-shrinkwrap.json`). See [JSON and TOML](#json-and-toml).
 1. Runs `actionlint` over all tracked `.github/workflows/*.yml` / `*.yaml` files (delegating embedded `run:` scripts to the bundled ShellCheck).
 1. If a `package.json` exists, requires a lockfile to accompany it: `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, or `bun.lockb`.
 1. Runs `shellcheck` over all tracked `*.sh` / `*.bash` files, plus extensionless files whose shebang names `sh`, `bash`, `dash`, or `ksh` (directly or through `env`), such as Git hooks. The generated `gradlew` and `mvnw` wrappers are skipped.
@@ -233,6 +236,34 @@ pre-commit hooks.
 
 Each `.yml` or `.yaml` name in the table matches both spellings, except Meltano
 and Mergify (`.yml` only) and Snapcraft (`.yaml` only).
+
+### JSON and TOML
+
+JSON files (`*.json`) must be strict [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259)
+JSON: no comments, trailing commas, `NaN` or `Infinity`, duplicate keys, or byte
+order mark. JSONC files may also use `//` and `/* */` comments, trailing commas,
+and a byte order mark, as TypeScript and VS Code allow. These files count as
+JSONC, at any depth, because the tools that read them accept comments:
+
+- `*.jsonc`, `*.code-workspace`, `*.code-snippets`, and `.vscode/*.json`
+- `devcontainer.json` and `.devcontainer.json`
+- `tsconfig*.json` and `jsconfig*.json`, such as `tsconfig.build.json`
+- `deno.json`, `biome.json`, `turbo.json`, `wrangler.json`, and `typedoc.json`
+- `.eslintrc.json`, `.oxlintrc.json`, `.babelrc.json`, `babel.config.json`,
+  `.markdownlint.json`, `cspell.json`, and `.cspell.json`
+- `appsettings*.json` (.NET)
+
+A strict JSON file that would parse as JSONC gets a hint saying so.
+
+TOML files (`*.toml` and Pipenv's `Pipfile`) must be valid
+[TOML 1.0](https://toml.io/en/v1.0.0), checked with
+[tomli](https://github.com/hukkin/tomli), which also rejects duplicate keys and
+tables. TOML 1.1 additions, such as trailing commas and line breaks in inline
+tables, are rejected: Python's `tomllib` (which reads `pyproject.toml`) and
+Gradle (which reads `libs.versions.toml`) only understand 1.0, and every 1.1
+reader accepts 1.0.
+
+Each problem is reported as `path:line:column: message`.
 
 ## Options
 
@@ -301,7 +332,7 @@ Published to Docker Hub as
 | Tag | Meaning |
 | --- | --- |
 | `9.0.0` | Exact, immutable version |
-| `8` | Rolling major tag (recommended for most pipelines) |
+| `9` | Rolling major tag (recommended for most pipelines) |
 | `latest` | The most recent build |
 
 Each tag is a multi-arch image for `linux/amd64` and `linux/arm64`; Docker picks
@@ -313,14 +344,15 @@ the right one for the host automatically.
 lintorama is a Docker image that bundles yamllint, ShellCheck, hadolint,
 markdownlint (mdl), luacheck, Ruff, actionlint, check-jsonschema, and
 editorconfig-checker behind a single command, `lint-extras`, for linting a Git
-repository in CI pipelines.
+repository in CI pipelines. It also syntax-checks JSON, JSONC, and TOML.
 
 **Which linters does lintorama include?**
 Nine: yamllint (YAML), ShellCheck (shell scripts), hadolint (Dockerfiles),
 markdownlint / mdl (Markdown), luacheck (Lua), Ruff (Python scripts),
 actionlint (GitHub Actions workflows), check-jsonschema (schema validation for
 CI and tooling config), and editorconfig-checker (`.editorconfig` conformance).
-See [Bundled linters](#bundled-linters) for exact versions.
+A built-in check covers JSON, JSONC, and TOML syntax. See
+[Bundled linters](#bundled-linters) for exact versions.
 
 **How do I run lintorama locally?**
 Run the [Quick start](#quick-start) command from the root of any Git repository
